@@ -2,7 +2,7 @@
 
 Camylla aims to turn an Android phone into a webcam for Windows video meetings, with a standalone desktop app and a local Wi-Fi connection.
 
-**Status: design stage.** This repository currently contains the product design, glossary, and architecture decisions. No application, proof of concept, installer, or release is available yet. The proposed stack and compatibility targets still require validation.
+**Status: early implementation.** The repository now contains the first portable protocol component alongside the product design, glossary, and architecture decisions. There is still no application, virtual-camera proof, installer, or release. The proposed stack and compatibility targets still require validation.
 
 ## Planned experience
 
@@ -39,6 +39,20 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 - [Glossary](GLOSSARY.md): shared domain terminology.
 - [Architecture decisions](docs/adr/): accepted decisions and their trade-offs.
 - [Reference-project inspection](docs/reference-projects.md): source research and dependency-review notes.
+- [Video wire protocol v1 draft](docs/protocol-v1.md): bounded framing for H.264 access units.
+
+## Build the first component
+
+The initial dependency-free C++20 library implements and tests bounded video
+frame serialization/parsing. It is portable so its behavior can be checked on
+non-Windows development hosts; this does not constitute the Windows virtual
+camera feasibility proof.
+
+```sh
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
 
 ## Roadmap
 
