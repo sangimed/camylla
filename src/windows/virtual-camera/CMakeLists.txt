@@ -33,13 +33,14 @@ if(WIN32)
         target_compile_options(camylla_virtual_camera_source PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
 
-    add_executable(camylla_virtual_camera_ctl src/virtual_camera_ctl.cpp)
+    add_executable(camylla_virtual_camera_ctl src/virtual_camera_ctl.cpp src/diagnose_source.cpp)
     target_link_libraries(camylla_virtual_camera_ctl PRIVATE
         camylla_virtual_camera_core
         mfplat
         mfsensorgroup
         advapi32
         ole32
+        mfuuid
     )
     target_compile_features(camylla_virtual_camera_ctl PRIVATE cxx_std_20)
     target_compile_definitions(camylla_virtual_camera_ctl PRIVATE UNICODE _UNICODE)

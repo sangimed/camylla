@@ -22,6 +22,7 @@ using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::RuntimeClass;
 using Microsoft::WRL::RuntimeClassFlags;
 using Microsoft::WRL::ClassicCom;
+using Microsoft::WRL::ChainInterfaces;
 
 namespace camylla::virtual_camera::win {
 
@@ -55,6 +56,7 @@ HRESULT CreateMediaType(VideoMode mode, IMFMediaType** media_type) {
         FAILED(hr = result->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12)) ||
         FAILED(hr = MFSetAttributeSize(result.Get(), MF_MT_FRAME_SIZE, mode.width, mode.height)) ||
         FAILED(hr = MFSetAttributeRatio(result.Get(), MF_MT_FRAME_RATE, mode.frames_per_second, 1)) ||
+        FAILED(hr = MFSetAttributeRatio(result.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1)) ||
         FAILED(hr = result->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive)) ||
         FAILED(hr = result->SetUINT32(MF_MT_FIXED_SIZE_SAMPLES, TRUE)) ||
         FAILED(hr = result->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE)) ||
@@ -67,7 +69,8 @@ HRESULT CreateMediaType(VideoMode mode, IMFMediaType** media_type) {
 }
 
 class CamyllaMediaStream final
-    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFMediaStream2> {
+    : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
+                          ChainInterfaces<IMFMediaStream2, IMFMediaStream, IMFMediaEventGenerator>> {
 public:
     HRESULT Initialize(CamyllaMediaSource* parent, DWORD stream_id, IMFStreamDescriptor* descriptor);
     HRESULT Start(IMFMediaType* type);
@@ -102,7 +105,9 @@ private:
 };
 
 class CamyllaMediaSource final
-    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFMediaSourceEx, IMFGetService, IKsControl> {
+    : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
+                          ChainInterfaces<IMFMediaSourceEx, IMFMediaSource, IMFMediaEventGenerator>, IMFGetService,
+                          IKsControl, IMFSampleAllocatorControl> {
 public:
     HRESULT Initialize(IMFAttributes* activation_attributes);
 
@@ -128,6 +133,9 @@ public:
                           ULONG data_length, ULONG* bytes_returned) override;
     STDMETHODIMP KsEvent(PKSEVENT event, ULONG event_length, LPVOID event_data,
                          ULONG data_length, ULONG* bytes_returned) override;
+    STDMETHODIMP SetDefaultAllocator(DWORD stream_id, IUnknown* allocator) override;
+    STDMETHODIMP GetAllocatorUsage(DWORD stream_id, DWORD* input_stream_id,
+                                   MFSampleAllocatorUsage* usage) override;
 
 private:
     std::mutex mutex_;
@@ -138,7 +146,8 @@ private:
     ComPtr<CamyllaMediaStream> stream_;
 };
 
-class CamyllaActivate final : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFActivate> {
+class CamyllaActivate final : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
+                                                  ChainInterfaces<IMFActivate, IMFAttributes>> {
 public:
     HRESULT Initialize() { return MFCreateAttributes(&attributes_, 0); }
 
@@ -267,10 +276,17 @@ STDMETHODIMP CamyllaMediaStream::SetStreamState(MF_STREAM_STATE state) {
     if (shutdown_) return MF_E_SHUTDOWN;
     switch (state) {
         case MF_STREAM_STATE_PAUSED:
+            if (stream_state_ != MF_STREAM_STATE_RUNNING) return MF_E_INVALID_STATE_TRANSITION;
+            stream_state_ = state;
             break;
         case MF_STREAM_STATE_RUNNING:
+            if (!provider_) return MF_E_INVALID_STATE_TRANSITION;
+            stream_state_ = state;
+            break;
         case MF_STREAM_STATE_STOPPED:
             stream_state_ = state;
+            started_ = false;
+            provider_.reset();
             break;
         default:
             return MF_E_INVALID_STATE_TRANSITION;
@@ -289,7 +305,7 @@ STDMETHODIMP CamyllaMediaStream::GetStreamState(MF_STREAM_STATE* state) {
 STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
     std::unique_lock lock(mutex_);
     if (shutdown_) return MF_E_SHUTDOWN;
-    if (!started_ || !provider_) return MF_E_INVALIDREQUEST;
+    if (!started_ || !provider_ || stream_state_ != MF_STREAM_STATE_RUNNING) return MF_E_INVALIDREQUEST;
     const auto now = std::chrono::steady_clock::now();
     const auto deadline = next_deadline_;
     const auto frame_duration = std::chrono::nanoseconds(1'000'000'000LL / mode_.frames_per_second);
@@ -300,7 +316,7 @@ STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
     {
         std::lock_guard state_lock(mutex_);
         if (shutdown_) return MF_E_SHUTDOWN;
-        if (!started_) return MF_E_INVALIDREQUEST;
+        if (!started_ || stream_state_ != MF_STREAM_STATE_RUNNING) return MF_E_INVALIDREQUEST;
     }
 
     ComPtr<IMFMediaBuffer> buffer;
@@ -332,7 +348,11 @@ HRESULT CamyllaMediaSource::Initialize(IMFAttributes* activation_attributes) {
         if (FAILED(hr = CreateMediaType(SupportedModes()[i], &media_types[i]))) return hr;
     }
     ComPtr<IMFStreamDescriptor> stream_descriptor;
-    if (FAILED(hr = MFCreateStreamDescriptor(0, 2, media_types[0].GetAddressOf(), &stream_descriptor)) ||
+    IMFMediaType* types[] = {media_types[0].Get(), media_types[1].Get()};
+    if (FAILED(hr = MFCreateStreamDescriptor(0, 2, types, &stream_descriptor))) return hr;
+    ComPtr<IMFMediaTypeHandler> handler;
+    if (FAILED(hr = stream_descriptor->GetMediaTypeHandler(&handler)) ||
+        FAILED(hr = handler->SetCurrentMediaType(media_types[0].Get())) ||
         FAILED(hr = MFCreatePresentationDescriptor(1, stream_descriptor.GetAddressOf(), &presentation_descriptor_))) return hr;
     presentation_descriptor_->SelectStream(0);
     stream_ = Microsoft::WRL::Make<CamyllaMediaStream>();
@@ -441,6 +461,27 @@ STDMETHODIMP CamyllaMediaSource::KsEvent(PKSEVENT event, ULONG event_length,
     UNREFERENCED_PARAMETER(data_length);
     if (bytes_returned != nullptr) *bytes_returned = 0;
     return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
+}
+
+STDMETHODIMP CamyllaMediaSource::GetAllocatorUsage(DWORD stream_id, DWORD* input_stream_id,
+                                                    MFSampleAllocatorUsage* usage) {
+    if (input_stream_id == nullptr || usage == nullptr) return E_POINTER;
+    std::lock_guard lock(mutex_);
+    if (state_ == SourceState::shutdown) return MF_E_SHUTDOWN;
+    if (stream_id != 0) return MF_E_INVALIDSTREAMNUMBER;
+    *input_stream_id = stream_id;
+    // RequestSample creates CPU-backed samples; no pipeline allocator is consumed.
+    *usage = MFSampleAllocatorUsage_UsesCustomAllocator;
+    return S_OK;
+}
+
+STDMETHODIMP CamyllaMediaSource::SetDefaultAllocator(DWORD stream_id, IUnknown* allocator) {
+    UNREFERENCED_PARAMETER(allocator);
+    std::lock_guard lock(mutex_);
+    if (state_ == SourceState::shutdown) return MF_E_SHUTDOWN;
+    if (stream_id != 0) return MF_E_INVALIDSTREAMNUMBER;
+    // The advertised custom-allocator mode does not accept a pipeline allocator.
+    return MF_E_INVALIDREQUEST;
 }
 
 }  // namespace

@@ -295,6 +295,14 @@ Run the control program from the directory containing both the EXE and DLL, or p
 
 ### Registration fails with an HRESULT
 
+Run the direct COM diagnostic from the Release output directory:
+
+```powershell
+.\camylla_virtual_camera_ctl.exe diagnose-source
+```
+
+It checks the x64 HKLM COM entry and threading model, `CoCreateInstance(IMFActivate)`, and then explicitly loads the adjacent DLL to test its export, class factory, activation object, media source, descriptors, media types, allocator usage, and stream interfaces. Before machine registration, the registry and `CoCreateInstance` checks will fail; the explicit DLL path still tests the implementation. `--source` can select a different DLL. Preserve the complete PASS/FAIL transcript. Direct success cannot prove Frame Server service activation or registration success.
+
 Do not hide or normalize the failure. Capture:
 
 - the complete command;

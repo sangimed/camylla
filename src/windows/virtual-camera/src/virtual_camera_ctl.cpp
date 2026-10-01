@@ -1,4 +1,5 @@
 #include "media_source.h"
+#include "diagnose_source.h"
 
 #include <mfapi.h>
 #include <mfvirtualcamera.h>
@@ -92,6 +93,7 @@ void PrintUsage() {
     std::wcerr << L"Usage:\n"
                << L"  camylla_virtual_camera_ctl register [--scope current-user|all-users] [--source path]\n"
                << L"  camylla_virtual_camera_ctl unregister [--scope current-user|all-users]\n"
+               << L"  camylla_virtual_camera_ctl diagnose-source [--source path]\n"
                << L"\nThe media-source COM DLL is registered machine-wide under HKLM so the "
                << L"Windows Frame Server service can activate it. Run register/unregister from "
                << L"an elevated terminal. --scope controls virtual-camera access only.\n";
@@ -160,6 +162,9 @@ int wmain(int argc, wchar_t** argv) {
             hr = RemoveComRegistration();
         }
         if (SUCCEEDED(hr)) std::wcout << L"Removed " << kFriendlyName << L" Windows Virtual Camera.\n";
+    } else if (command == L"diagnose-source") {
+        failure_operation = L"diagnose-source";
+        hr = DiagnoseSource(dll_path);
     } else { PrintUsage(); hr = E_INVALIDARG; }
 
     if (FAILED(hr)) PrintFailure(failure_operation, hr);
