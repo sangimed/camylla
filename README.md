@@ -35,6 +35,7 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 
 ## Documentation
 
+- [Project roadmap](ROADMAP.md): current milestone, future phases, and tracking convention.
 - [Living design](docs/design.md): product scope, architecture, validation gates, and milestones.
 - [Glossary](GLOSSARY.md): shared domain terminology.
 - [Architecture decisions](docs/adr/): accepted decisions and their trade-offs.
@@ -56,13 +57,9 @@ ctest --test-dir build --output-on-failure
 
 ## Roadmap
 
-1. Validate the Windows virtual camera, target applications, preview, and deployment.
-2. Validate Android capture, controls, screen-off behavior, and a stable 30-FPS baseline.
-3. Prove secure end-to-end transport, latency, and recovery under network impairment.
-4. Build the setup, preview, settings, and recovery experience for an alpha.
-5. Expand device testing and complete security, licensing, packaging, and release checks.
+The current focus is **M1: Windows virtual-camera feasibility**. Track the concrete task in [issue #2](https://github.com/sangimed/camylla/issues/2) and see [ROADMAP.md](ROADMAP.md) for milestone status and the planned path to v1.0.
 
-See the [design milestones](docs/design.md#21-milestones-from-proof-of-concept-to-v10) for exit criteria. Dates are not set, and there are no build or installation instructions yet.
+The detailed technical gates and exit criteria remain in the [living design](docs/design.md#21-milestones-from-proof-of-concept-to-v10). Dates are deliberately unset.
 
 ## License direction
 
