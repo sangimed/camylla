@@ -41,14 +41,13 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 - [Architecture decisions](docs/adr/): accepted decisions and their trade-offs.
 - [Reference-project inspection](docs/reference-projects.md): source research and dependency-review notes.
 - [Video wire protocol v1 draft](docs/protocol-v1.md): bounded framing for H.264 access units.
-- [Windows virtual-camera POC](docs/windows-virtual-camera-poc.md): build, registration, architecture, and evidence limits for M1.
+- [Windows virtual-camera POC](docs/windows-virtual-camera-poc.md): prerequisites, build, registration, smoke test, removal, troubleshooting, architecture, and M1 evidence limits.
 
-## Build the first component
+## Build and test
 
-The initial dependency-free C++20 library implements and tests bounded video
-frame serialization/parsing. It is portable so its behavior can be checked on
-non-Windows development hosts; this does not constitute the Windows virtual
-camera feasibility proof.
+For the Windows virtual-camera POC, follow the complete [Windows developer quick start](docs/windows-virtual-camera-poc.md#windows-developer-quick-start). It covers prerequisites, Visual Studio 2022 x64 configuration, build, tests, current-user registration, the first OBS smoke test, and clean removal.
+
+The initial dependency-free C++20 protocol library remains portable so its behavior can also be checked on non-Windows development hosts:
 
 ```sh
 cmake -S . -B build -G Ninja
