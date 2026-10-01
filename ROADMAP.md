@@ -8,19 +8,15 @@ Detailed, executable work belongs in [GitHub Issues](https://github.com/sangimed
 
 ### M1 — Windows virtual-camera feasibility
 
-**Status:** in progress  
-**Tracking:** [#2 — M1: validate Windows virtual camera feasibility](https://github.com/sangimed/camylla/issues/2)
+**Status:** partially validated — Windows runtime evidence pending  
+**Tracking:** [#2 — M1: validate Windows virtual camera feasibility](https://github.com/sangimed/camylla/issues/2)  
+**POC implementation:** [#4 — poc: validate Windows virtual camera feasibility](https://github.com/sangimed/camylla/pull/4)
 
-Prove the riskiest Windows assumption before building the full product:
+The first Windows virtual-camera implementation now exists: a native Media Foundation source, a registration/removal control tool, deterministic NV12 synthetic frames, and portable tests for frame layout and cadence.
 
-- expose a Windows 11 x64 Media Foundation software virtual camera;
-- feed it with deterministic synthetic frames;
-- validate baseline 720p30 and 1080p30 operation;
-- understand registration, source lifetime, deployment, and elevation requirements;
-- manually validate the webcam in Teams, Zoom, and OBS;
-- keep a clean seam for future bounded local IPC without implementing production IPC yet.
+The central feasibility gate is still open because the POC has not yet been built and exercised on Windows 11. M1 still needs evidence for registration/activation, source lifetime, 720p30/1080p30 delivery through the Windows camera pipeline, UAC/deployment behavior, and Teams/Zoom/OBS compatibility.
 
-M1 is complete only when there is recorded evidence that the selected Media Foundation approach is viable for Camylla's intended desktop experience.
+M1 is complete only when there is recorded Windows evidence that the selected Media Foundation approach is viable for Camylla's intended desktop experience.
 
 ## Milestones
 
@@ -39,16 +35,17 @@ The design remains a living document. Completing M0 does not mean every implemen
 
 ### M1 — Windows feasibility
 
-**Status:** current
+**Status:** current — partially validated
 
-- [ ] Prove Media Foundation virtual-camera registration and activation.
-- [ ] Produce synthetic offline/test frames.
-- [ ] Validate 720p30 and 1080p30 baseline formats.
+- [x] Implement the Windows Media Foundation virtual-camera POC and development registration tool.
+- [x] Implement and test deterministic synthetic offline/test frames.
+- [ ] Prove Media Foundation virtual-camera registration and activation on Windows 11.
+- [ ] Validate 720p30 and 1080p30 through the real Windows camera pipeline.
 - [ ] Validate repeated consumer open/close/reopen behavior.
-- [ ] Determine source lifetime and registration model.
+- [ ] Determine source lifetime and registration model from observed Windows behavior.
 - [ ] Determine actual UAC/elevation/deployment requirements.
 - [ ] Test Teams, Zoom, and OBS with recorded versions.
-- [ ] Decide whether the current Media Foundation direction survives the proof.
+- [ ] Decide whether the current Media Foundation direction survives the completed proof.
 
 ### M2 — Android feasibility
 
