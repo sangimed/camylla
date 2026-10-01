@@ -19,17 +19,85 @@ The source generates a moving NV12 colour-bar pattern with a `CAMYLLAPOC` glyph 
 
 ## Windows developer quick start
 
-### 1. Prerequisites
+### 1. Install the prerequisites
 
 Use a **Windows 11 x64** development machine, build 22000 or later.
 
-Install Visual Studio 2022 or Visual Studio 2022 Build Tools with the C++ desktop toolchain. The environment must provide:
+Camylla versions its Visual Studio requirements in the root [`.vsconfig`](../.vsconfig). The configuration currently requests:
 
-- MSVC x64 C++ compiler;
-- Windows 11 SDK containing `mfvirtualcamera.h` (SDK 22000 or later);
-- CMake 3.25 or later.
+- **Desktop development with C++**;
+- the current MSVC x64/x86 build tools;
+- **C++ CMake tools for Windows**;
+- Windows 11 SDK 10.0.26100.
 
-Git is required to clone the repository.
+The project itself only relies on APIs available from Windows 11 SDK 22000 or later, but using the versioned `.vsconfig` gives contributors a common, reproducible toolchain.
+
+#### Recommended: Visual Studio 2022 Community + `.vsconfig`
+
+If Visual Studio 2022 Community is not installed, the most reproducible command-line setup is:
+
+1. clone Camylla or otherwise place its `.vsconfig` on the Windows filesystem;
+2. open an **elevated PowerShell**;
+3. run:
+
+```powershell
+$vsconfig = (Resolve-Path .\.vsconfig).Path
+
+winget install --id Microsoft.VisualStudio.2022.Community -e `
+  --override "--passive --config `"$vsconfig`""
+```
+
+Visual Studio Installer operations require elevation. Let Visual Studio Installer finish before configuring Camylla.
+
+If Visual Studio 2022 Community is already installed, open **Visual Studio Installer**, choose **Modify** for the installation, and import/use the repository's `.vsconfig`. Alternatively, ensure the following are selected manually:
+
+- workload: **Desktop development with C++**;
+- **MSVC v143 / current x64/x86 C++ build tools**;
+- **C++ CMake tools for Windows**;
+- a **Windows 11 SDK 22000 or later**.
+
+#### Minimal alternative: Visual Studio 2022 Build Tools
+
+The full IDE is not required. For a command-line-only setup, install **Build Tools for Visual Studio 2022**, then select the **Desktop development with C++** workload in Visual Studio Installer.
+
+For Build Tools, Microsoft identifies that workload as:
+
+```text
+Microsoft.VisualStudio.Workload.VCTools
+```
+
+Make sure its installation includes an x64 MSVC toolchain, CMake support, and a Windows 11 SDK 22000 or later.
+
+The rest of this guide uses the Visual Studio 2022 CMake generator and works with either a suitable Community or Build Tools installation.
+
+#### Verify the toolchain
+
+Open **Developer PowerShell for VS 2022** and run:
+
+```powershell
+cmake --version
+cl
+```
+
+CMake must be 3.25 or later, and `cl` must report an x64-capable MSVC toolchain.
+
+Verify that a Windows SDK containing the virtual-camera header is installed:
+
+```powershell
+Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" `
+  -Recurse -Filter mfvirtualcamera.h |
+  Select-Object -First 1 -ExpandProperty FullName
+```
+
+That command must print a path to `mfvirtualcamera.h`.
+
+Git is also required. Verify it with:
+
+```powershell
+git --version
+```
+
+If any of these checks fail, fix the Visual Studio/SDK installation before configuring the project.
 
 The canonical POC procedure below uses the **Visual Studio 17 2022** CMake generator. This is intentional: it avoids requiring a separate Ninja installation and gives a predictable `Release` output directory.
 
