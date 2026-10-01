@@ -7,6 +7,9 @@
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfobjects.h>
+#include <ks.h>
+#include <ksmedia.h>
+#include <ksproxy.h>
 #include <wrl/client.h>
 
 #include <chrono>
@@ -29,6 +32,16 @@ namespace {
 enum class SourceState { stopped, started, shutdown };
 
 class CamyllaMediaSource;
+
+HRESULT SetFrameServerStreamAttributes(IMFAttributes* attributes, DWORD stream_id) {
+    if (attributes == nullptr) return E_POINTER;
+    HRESULT hr = attributes->SetGUID(MF_DEVICESTREAM_STREAM_CATEGORY, PINNAME_VIDEO_CAPTURE);
+    if (FAILED(hr)) return hr;
+    if (FAILED(hr = attributes->SetUINT32(MF_DEVICESTREAM_STREAM_ID, stream_id))) return hr;
+    if (FAILED(hr = attributes->SetUINT32(MF_DEVICESTREAM_FRAMESERVER_SHARED, 1))) return hr;
+    return attributes->SetUINT32(MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES,
+                                 MFFrameSourceTypes_Color);
+}
 
 HRESULT CreateMediaType(VideoMode mode, IMFMediaType** media_type) {
     if (media_type == nullptr) {
@@ -54,12 +67,13 @@ HRESULT CreateMediaType(VideoMode mode, IMFMediaType** media_type) {
 }
 
 class CamyllaMediaStream final
-    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFMediaStream> {
+    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFMediaStream2> {
 public:
     HRESULT Initialize(CamyllaMediaSource* parent, DWORD stream_id, IMFStreamDescriptor* descriptor);
     HRESULT Start(IMFMediaType* type);
     HRESULT Stop(bool queue_event);
     HRESULT Shutdown();
+    HRESULT GetAttributes(IMFAttributes** attributes);
 
     STDMETHODIMP BeginGetEvent(IMFAsyncCallback* callback, IUnknown* state) override;
     STDMETHODIMP EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) override;
@@ -69,24 +83,28 @@ public:
     STDMETHODIMP GetMediaSource(IMFMediaSource** source) override;
     STDMETHODIMP GetStreamDescriptor(IMFStreamDescriptor** descriptor) override;
     STDMETHODIMP RequestSample(IUnknown* token) override;
+    STDMETHODIMP SetStreamState(MF_STREAM_STATE state) override;
+    STDMETHODIMP GetStreamState(MF_STREAM_STATE* state) override;
 
 private:
     std::mutex mutex_;
     ComPtr<IMFMediaSource> parent_;
     ComPtr<IMFMediaEventQueue> events_;
     ComPtr<IMFStreamDescriptor> descriptor_;
+    ComPtr<IMFAttributes> attributes_;
     std::unique_ptr<SyntheticFrameProvider> provider_;
     VideoMode mode_{};
     std::uint64_t frame_index_{};
     bool started_{};
     bool shutdown_{};
+    MF_STREAM_STATE stream_state_{MF_STREAM_STATE_STOPPED};
     std::chrono::steady_clock::time_point next_deadline_{};
 };
 
 class CamyllaMediaSource final
-    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFMediaSourceEx> {
+    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IMFMediaSourceEx, IMFGetService, IKsControl> {
 public:
-    HRESULT Initialize();
+    HRESULT Initialize(IMFAttributes* activation_attributes);
 
     STDMETHODIMP BeginGetEvent(IMFAsyncCallback* callback, IUnknown* state) override;
     STDMETHODIMP EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) override;
@@ -103,6 +121,13 @@ public:
     STDMETHODIMP GetSourceAttributes(IMFAttributes** attributes) override;
     STDMETHODIMP GetStreamAttributes(DWORD stream_identifier, IMFAttributes** attributes) override;
     STDMETHODIMP SetD3DManager(IUnknown* manager) override;
+    STDMETHODIMP GetService(REFGUID service, REFIID iid, LPVOID* object) override;
+    STDMETHODIMP KsProperty(PKSPROPERTY property, ULONG property_length, LPVOID property_data,
+                            ULONG data_length, ULONG* bytes_returned) override;
+    STDMETHODIMP KsMethod(PKSMETHOD method, ULONG method_length, LPVOID method_data,
+                          ULONG data_length, ULONG* bytes_returned) override;
+    STDMETHODIMP KsEvent(PKSEVENT event, ULONG event_length, LPVOID event_data,
+                         ULONG data_length, ULONG* bytes_returned) override;
 
 private:
     std::mutex mutex_;
@@ -122,11 +147,11 @@ public:
         *object = nullptr;
         ComPtr<CamyllaMediaSource> source = Microsoft::WRL::Make<CamyllaMediaSource>();
         if (!source) return E_OUTOFMEMORY;
-        HRESULT hr = source->Initialize();
+        HRESULT hr = source->Initialize(attributes_.Get());
         return SUCCEEDED(hr) ? source.CopyTo(iid, object) : hr;
     }
-    STDMETHODIMP ShutdownObject() override { return S_OK; }
-    STDMETHODIMP DetachObject() override { return S_OK; }
+    STDMETHODIMP ShutdownObject() override { return E_NOTIMPL; }
+    STDMETHODIMP DetachObject() override { return E_NOTIMPL; }
 
 #define CAMYLLA_FORWARD_ATTRIBUTE(method, ...) return attributes_->method(__VA_ARGS__)
     STDMETHODIMP GetItem(REFGUID key, PROPVARIANT* item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetItem, key, item_value); }
@@ -173,8 +198,9 @@ HRESULT CamyllaMediaStream::Initialize(CamyllaMediaSource* parent, DWORD stream_
     HRESULT parent_hr = parent->QueryInterface(IID_PPV_ARGS(&parent_));
     if (FAILED(parent_hr)) return parent_hr;
     descriptor_ = descriptor;
-    UNREFERENCED_PARAMETER(stream_id);
-    return S_OK;
+    if (FAILED(hr = MFCreateAttributes(&attributes_, 4))) return hr;
+    if (FAILED(hr = SetFrameServerStreamAttributes(attributes_.Get(), stream_id))) return hr;
+    return SetFrameServerStreamAttributes(descriptor_.Get(), stream_id);
 }
 
 HRESULT CamyllaMediaStream::Start(IMFMediaType* type) {
@@ -196,6 +222,7 @@ HRESULT CamyllaMediaStream::Start(IMFMediaType* type) {
     frame_index_ = 0;
     next_deadline_ = std::chrono::steady_clock::now();
     started_ = true;
+    stream_state_ = MF_STREAM_STATE_RUNNING;
     return events_->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr);
 }
 
@@ -203,6 +230,7 @@ HRESULT CamyllaMediaStream::Stop(bool queue_event) {
     std::lock_guard lock(mutex_);
     if (shutdown_) return MF_E_SHUTDOWN;
     started_ = false;
+    stream_state_ = MF_STREAM_STATE_STOPPED;
     provider_.reset();
     return queue_event ? events_->QueueEventParamVar(MEStreamStopped, GUID_NULL, S_OK, nullptr) : S_OK;
 }
@@ -212,9 +240,11 @@ HRESULT CamyllaMediaStream::Shutdown() {
     if (shutdown_) return S_OK;
     shutdown_ = true;
     started_ = false;
+    stream_state_ = MF_STREAM_STATE_STOPPED;
     provider_.reset();
     parent_.Reset();
     descriptor_.Reset();
+    attributes_.Reset();
     return events_ ? events_->Shutdown() : S_OK;
 }
 
@@ -224,6 +254,37 @@ STDMETHODIMP CamyllaMediaStream::GetEvent(DWORD flags, IMFMediaEvent** event) { 
 STDMETHODIMP CamyllaMediaStream::QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status, const PROPVARIANT* event_value) { return events_->QueueEventParamVar(type, extended_type, status, event_value); }
 STDMETHODIMP CamyllaMediaStream::GetMediaSource(IMFMediaSource** source) { if (source == nullptr) return E_POINTER; return parent_.CopyTo(source); }
 STDMETHODIMP CamyllaMediaStream::GetStreamDescriptor(IMFStreamDescriptor** descriptor) { if (descriptor == nullptr) return E_POINTER; return descriptor_.CopyTo(descriptor); }
+
+HRESULT CamyllaMediaStream::GetAttributes(IMFAttributes** attributes) {
+    if (attributes == nullptr) return E_POINTER;
+    std::lock_guard lock(mutex_);
+    if (shutdown_) return MF_E_SHUTDOWN;
+    return attributes_.CopyTo(attributes);
+}
+
+STDMETHODIMP CamyllaMediaStream::SetStreamState(MF_STREAM_STATE state) {
+    std::lock_guard lock(mutex_);
+    if (shutdown_) return MF_E_SHUTDOWN;
+    switch (state) {
+        case MF_STREAM_STATE_PAUSED:
+            break;
+        case MF_STREAM_STATE_RUNNING:
+        case MF_STREAM_STATE_STOPPED:
+            stream_state_ = state;
+            break;
+        default:
+            return MF_E_INVALID_STATE_TRANSITION;
+    }
+    return S_OK;
+}
+
+STDMETHODIMP CamyllaMediaStream::GetStreamState(MF_STREAM_STATE* state) {
+    if (state == nullptr) return E_POINTER;
+    std::lock_guard lock(mutex_);
+    if (shutdown_) return MF_E_SHUTDOWN;
+    *state = stream_state_;
+    return S_OK;
+}
 
 STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
     std::unique_lock lock(mutex_);
@@ -260,10 +321,12 @@ STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
     return events_->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, sample.Get());
 }
 
-HRESULT CamyllaMediaSource::Initialize() {
+HRESULT CamyllaMediaSource::Initialize(IMFAttributes* activation_attributes) {
     HRESULT hr = MFCreateEventQueue(&events_);
     if (FAILED(hr)) return hr;
-    if (FAILED(hr = MFCreateAttributes(&attributes_, 0))) return hr;
+    if (FAILED(hr = MFCreateAttributes(&attributes_, 8))) return hr;
+    if (activation_attributes != nullptr &&
+        FAILED(hr = activation_attributes->CopyAllItems(attributes_.Get()))) return hr;
     ComPtr<IMFMediaType> media_types[2];
     for (std::size_t i = 0; i < SupportedModes().size(); ++i) {
         if (FAILED(hr = CreateMediaType(SupportedModes()[i], &media_types[i]))) return hr;
@@ -329,8 +392,56 @@ STDMETHODIMP CamyllaMediaSource::Shutdown() {
     return FAILED(stream_hr) ? stream_hr : queue_hr;
 }
 STDMETHODIMP CamyllaMediaSource::GetSourceAttributes(IMFAttributes** attributes) { if (attributes == nullptr) return E_POINTER; std::lock_guard lock(mutex_); return state_ == SourceState::shutdown ? MF_E_SHUTDOWN : attributes_.CopyTo(attributes); }
-STDMETHODIMP CamyllaMediaSource::GetStreamAttributes(DWORD stream_identifier, IMFAttributes** attributes) { UNREFERENCED_PARAMETER(stream_identifier); if (attributes == nullptr) return E_POINTER; *attributes = nullptr; std::lock_guard lock(mutex_); return state_ == SourceState::shutdown ? MF_E_SHUTDOWN : E_NOTIMPL; }
+STDMETHODIMP CamyllaMediaSource::GetStreamAttributes(DWORD stream_identifier, IMFAttributes** attributes) {
+    if (attributes == nullptr) return E_POINTER;
+    *attributes = nullptr;
+    std::lock_guard lock(mutex_);
+    if (state_ == SourceState::shutdown) return MF_E_SHUTDOWN;
+    if (stream_identifier != 0) return MF_E_INVALIDSTREAMNUMBER;
+    return stream_->GetAttributes(attributes);
+}
 STDMETHODIMP CamyllaMediaSource::SetD3DManager(IUnknown* manager) { UNREFERENCED_PARAMETER(manager); return S_OK; }
+
+STDMETHODIMP CamyllaMediaSource::GetService(REFGUID service, REFIID iid, LPVOID* object) {
+    UNREFERENCED_PARAMETER(service);
+    UNREFERENCED_PARAMETER(iid);
+    if (object == nullptr) return E_POINTER;
+    *object = nullptr;
+    return MF_E_UNSUPPORTED_SERVICE;
+}
+
+STDMETHODIMP CamyllaMediaSource::KsProperty(PKSPROPERTY property, ULONG property_length,
+                                             LPVOID property_data, ULONG data_length,
+                                             ULONG* bytes_returned) {
+    UNREFERENCED_PARAMETER(property);
+    UNREFERENCED_PARAMETER(property_length);
+    UNREFERENCED_PARAMETER(property_data);
+    UNREFERENCED_PARAMETER(data_length);
+    if (bytes_returned != nullptr) *bytes_returned = 0;
+    return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
+}
+
+STDMETHODIMP CamyllaMediaSource::KsMethod(PKSMETHOD method, ULONG method_length,
+                                           LPVOID method_data, ULONG data_length,
+                                           ULONG* bytes_returned) {
+    UNREFERENCED_PARAMETER(method);
+    UNREFERENCED_PARAMETER(method_length);
+    UNREFERENCED_PARAMETER(method_data);
+    UNREFERENCED_PARAMETER(data_length);
+    if (bytes_returned != nullptr) *bytes_returned = 0;
+    return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
+}
+
+STDMETHODIMP CamyllaMediaSource::KsEvent(PKSEVENT event, ULONG event_length,
+                                          LPVOID event_data, ULONG data_length,
+                                          ULONG* bytes_returned) {
+    UNREFERENCED_PARAMETER(event);
+    UNREFERENCED_PARAMETER(event_length);
+    UNREFERENCED_PARAMETER(event_data);
+    UNREFERENCED_PARAMETER(data_length);
+    if (bytes_returned != nullptr) *bytes_returned = 0;
+    return HRESULT_FROM_WIN32(ERROR_SET_NOT_FOUND);
+}
 
 }  // namespace
 
