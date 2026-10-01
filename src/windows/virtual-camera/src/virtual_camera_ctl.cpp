@@ -38,19 +38,15 @@ std::optional<Scope> ParseScope(std::wstring_view value) {
     return std::nullopt;
 }
 
-HKEY ClassesRoot(Scope scope) {
-    return scope == Scope::current_user ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
-}
-
 std::wstring ClassesPath() {
     return std::wstring(L"Software\\Classes\\CLSID\\") +
            camylla::virtual_camera::win::kSourceClsidText;
 }
 
-HRESULT WriteComRegistration(Scope scope, const std::filesystem::path& source_dll) {
+HRESULT WriteComRegistration(const std::filesystem::path& source_dll) {
     HKEY class_key = nullptr;
     const auto path = ClassesPath() + L"\\InprocServer32";
-    const LONG create_result = RegCreateKeyExW(ClassesRoot(scope), path.c_str(), 0, nullptr,
+    const LONG create_result = RegCreateKeyExW(HKEY_LOCAL_MACHINE, path.c_str(), 0, nullptr,
                                                 REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr,
                                                 &class_key, nullptr);
     if (create_result != ERROR_SUCCESS) return HRESULT_FROM_WIN32(create_result);
@@ -67,9 +63,17 @@ HRESULT WriteComRegistration(Scope scope, const std::filesystem::path& source_dl
     return HRESULT_FROM_WIN32(threading_result);
 }
 
-HRESULT RemoveComRegistration(Scope scope) {
-    const LONG result = RegDeleteTreeW(ClassesRoot(scope), ClassesPath().c_str());
-    return result == ERROR_FILE_NOT_FOUND ? S_OK : HRESULT_FROM_WIN32(result);
+HRESULT RemoveComRegistration() {
+    const LONG machine_result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, ClassesPath().c_str());
+    if (machine_result != ERROR_SUCCESS && machine_result != ERROR_FILE_NOT_FOUND) {
+        return HRESULT_FROM_WIN32(machine_result);
+    }
+
+    // Clean up the legacy per-user registration used by the first POC revisions.
+    const LONG user_result = RegDeleteTreeW(HKEY_CURRENT_USER, ClassesPath().c_str());
+    return user_result == ERROR_SUCCESS || user_result == ERROR_FILE_NOT_FOUND
+        ? S_OK
+        : HRESULT_FROM_WIN32(user_result);
 }
 
 HRESULT OpenCamera(Scope scope, IMFVirtualCamera** camera) {
@@ -88,8 +92,9 @@ void PrintUsage() {
     std::wcerr << L"Usage:\n"
                << L"  camylla_virtual_camera_ctl register [--scope current-user|all-users] [--source path]\n"
                << L"  camylla_virtual_camera_ctl unregister [--scope current-user|all-users]\n"
-               << L"\nCurrent-user registration uses HKCU and does not itself require elevation. "
-               << L"All-users registration uses HKLM and requires an elevated terminal.\n";
+               << L"\nThe media-source COM DLL is registered machine-wide under HKLM so the "
+               << L"Windows Frame Server service can activate it. Run register/unregister from "
+               << L"an elevated terminal. --scope controls virtual-camera access only.\n";
 }
 
 }  // namespace
@@ -128,7 +133,7 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring_view failure_operation = command;
     if (command == L"register") {
         failure_operation = L"COM registration";
-        hr = WriteComRegistration(scope, dll_path);
+        hr = WriteComRegistration(dll_path);
         if (SUCCEEDED(hr)) {
             IMFVirtualCamera* camera = nullptr;
             failure_operation = L"MFCreateVirtualCamera";
@@ -138,7 +143,7 @@ int wmain(int argc, wchar_t** argv) {
                 hr = camera->Start(nullptr);
                 camera->Release();
             }
-            if (FAILED(hr)) static_cast<void>(RemoveComRegistration(scope));
+            if (FAILED(hr)) static_cast<void>(RemoveComRegistration());
         }
         if (SUCCEEDED(hr)) std::wcout << L"Registered " << kFriendlyName << L" Windows Virtual Camera.\n";
     } else if (command == L"unregister") {
@@ -152,7 +157,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (SUCCEEDED(hr)) {
             failure_operation = L"COM registration removal";
-            hr = RemoveComRegistration(scope);
+            hr = RemoveComRegistration();
         }
         if (SUCCEEDED(hr)) std::wcout << L"Removed " << kFriendlyName << L" Windows Virtual Camera.\n";
     } else { PrintUsage(); hr = E_INVALIDARG; }

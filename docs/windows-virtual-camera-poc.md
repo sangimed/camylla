@@ -152,7 +152,7 @@ Do not continue as if the POC is healthy if either test fails. Preserve the full
 
 ### 6. Register the camera for the current user
 
-Open a **normal, non-elevated PowerShell** first. Current-user registration is the preferred M1 validation path.
+Open an **elevated PowerShell**. The virtual camera can still use current-user access, but its COM media-source DLL is registered machine-wide so the Windows Frame Server service can activate it.
 
 ```powershell
 cd build\src\windows\virtual-camera\Release
@@ -163,8 +163,8 @@ A successful command should report that the Camylla virtual camera was registere
 
 The tool:
 
-1. registers the POC COM source under the current user's classes;
-2. calls `MFCreateVirtualCamera`;
+1. registers the POC COM source under `HKLM\Software\Classes\CLSID`;
+2. calls `MFCreateVirtualCamera` with the requested virtual-camera access scope;
 3. starts the system-lifetime virtual camera.
 
 Do not manually edit the registry as part of the normal workflow.
@@ -221,7 +221,7 @@ Only test it when the current-user path has already been characterized. Use an e
 .\camylla_virtual_camera_ctl.exe unregister --scope all-users
 ```
 
-All-user registration writes the corresponding HKLM COM entry and uses `MFVirtualCameraAccess_AllUsers`. The elevation/UAC behavior observed on the test machine belongs in the M1 validation evidence.
+The COM source is already machine-wide for both camera scopes. `--scope all-users` changes the `MFVirtualCameraAccess` value to `MFVirtualCameraAccess_AllUsers`. Both development registration modes therefore require an elevated terminal because the source DLL must be visible to the Frame Server service.
 
 ## Alternative Ninja build
 
@@ -245,15 +245,15 @@ There is normally no `Release\` subdirectory in this layout. This distinction is
 
 ## Registration and source lifetime
 
-The current-user workflow writes the POC COM activation entry under:
+The development workflow writes the POC COM activation entry machine-wide under:
 
 ```text
-HKCU\Software\Classes\CLSID\{CA9F0B23-C7E0-42C7-94B4-2D6A5FAD544D}\InprocServer32
+HKLM\Software\Classes\CLSID\{CA9F0B23-C7E0-42C7-94B4-2D6A5FAD544D}\InprocServer32
 ```
 
-It then calls `MFCreateVirtualCamera` with system lifetime/current-user access and starts it. `unregister` calls `IMFVirtualCamera::Remove` before deleting that exact COM key.
+This is independent from the virtual camera's access scope. `MFVirtualCameraAccess_CurrentUser` means the created camera is accessible only by the current user; it does **not** mean the in-process COM source should be registered only in that user's HKCU hive. The Windows Frame Server hosts custom media sources as a service process, so the source registration must be visible machine-wide.
 
-For all-users scope, the corresponding class entry is under HKLM.
+`unregister` calls `IMFVirtualCamera::Remove` before removing the machine-wide COM entry. It also removes the legacy HKCU entry used by early POC revisions if one is present.
 
 `MFVirtualCameraLifetime_System` is used so the camera is intended to persist across sessions and reboots. Reopening with identical API parameters is intended to reopen the same camera; `Remove` disables and unregisters it.
 
@@ -337,10 +337,10 @@ Manual registry cleanup should be a last-resort diagnostic step, not the documen
 | Build 22000+, `MFCreateVirtualCamera`, system/current-user/all-user parameters, and all-user administrator requirement | Microsoft API documentation | Not tested on Windows yet |
 | System lifetime persists across sessions/reboots; identical parameters reopen a camera; `Remove` invalidates active consumers | Microsoft API documentation | Not tested on Windows yet |
 | Frame-server processes host the custom source during creation/use | Microsoft VirtualCamera sample documentation | Not tested on Windows yet |
-| HKCU COM registration is sufficient for current-user source activation | POC hypothesis to validate | Not tested; do not treat as proven deployment behavior |
+| Media-source COM registration must be machine-wide for Frame Server activation | Microsoft sample deployment model plus Windows runtime evidence | Current HKCU-only POC path failed during `IMFVirtualCamera::Start`; machine-wide path pending validation |
 | Teams, Zoom, OBS compatibility; exact negotiated formats; repeat-open behavior | Required manual consumer testing | Not tested |
 
-The implementation deliberately avoids treating sample behavior as product evidence. In particular, the current-user COM deployment path and reboot behavior must be recorded by the worksheet before an installer or a final registration-scope decision is made.
+The implementation deliberately separates **COM deployment scope** from **virtual-camera access scope**. The machine-wide COM registration follows the Microsoft sample deployment model; current-user versus all-users remains an `MFVirtualCameraAccess` decision. Reboot behavior and final installer policy still require recorded Windows evidence.
 
 ## Full M1 manual validation
 
