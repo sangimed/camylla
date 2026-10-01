@@ -1,6 +1,6 @@
 # Camylla living design
 
-Status: confirmed design baseline. Grill session concluded with shared understanding on 2026-10-01. Confirmed decisions are distinguished from proposed technical details and empirical questions. No production code or proof-of-concept has been implemented. Technology selections are conditional on the stated proof gates; they are not evidence that performance or compatibility is already established. Implementation requires a subsequent instruction.
+Status: confirmed design baseline. Grill session concluded with shared understanding on 2026-10-01. Confirmed decisions are distinguished from proposed technical details and empirical questions. The repository now contains a Windows virtual-camera POC and portable protocol code; the POC's Windows registration, frame-server lifecycle, and application compatibility evidence remains uncollected. Technology selections are conditional on the stated proof gates; they are not evidence that performance or compatibility is already established.
 
 ## 1. Product vision
 
