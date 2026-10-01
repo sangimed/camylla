@@ -45,7 +45,7 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 
 ## Build and test
 
-For the Windows virtual-camera POC, follow the complete [Windows developer quick start](docs/windows-virtual-camera-poc.md#windows-developer-quick-start). It covers prerequisites, Visual Studio 2022 x64 configuration, build, tests, current-user registration, the first OBS smoke test, and clean removal.
+For the Windows virtual-camera POC, follow the complete [Windows developer quick start](docs/windows-virtual-camera-poc.md#windows-developer-quick-start). It covers installing the prerequisites from the versioned [`.vsconfig`](.vsconfig), Visual Studio 2022 x64 configuration, build, tests, current-user registration, the first OBS smoke test, troubleshooting, and clean removal.
 
 The initial dependency-free C++20 protocol library remains portable so its behavior can also be checked on non-Windows development hosts:
 
