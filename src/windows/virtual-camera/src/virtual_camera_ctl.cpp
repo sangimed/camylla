@@ -86,8 +86,8 @@ std::filesystem::path DefaultSourcePath(const wchar_t* executable_path) {
 
 void PrintUsage() {
     std::wcerr << L"Usage:\n"
-               << L"  camylla_virtual_camera_ctl register [--scope current-user|all-users] [--source path]\\n"
-               << L"  camylla_virtual_camera_ctl unregister [--scope current-user|all-users]\\n"
+               << L"  camylla_virtual_camera_ctl register [--scope current-user|all-users] [--source path]\n"
+               << L"  camylla_virtual_camera_ctl unregister [--scope current-user|all-users]\n"
                << L"\nCurrent-user registration uses HKCU and does not itself require elevation. "
                << L"All-users registration uses HKLM and requires an elevated terminal.\n";
 }
@@ -125,12 +125,16 @@ int wmain(int argc, wchar_t** argv) {
     if (FAILED(mf_hr)) { PrintFailure(L"MFStartup", mf_hr); if (SUCCEEDED(co_hr)) CoUninitialize(); return 1; }
 
     HRESULT hr = S_OK;
+    std::wstring_view failure_operation = command;
     if (command == L"register") {
+        failure_operation = L"COM registration";
         hr = WriteComRegistration(scope, dll_path);
         if (SUCCEEDED(hr)) {
             IMFVirtualCamera* camera = nullptr;
+            failure_operation = L"MFCreateVirtualCamera";
             hr = OpenCamera(scope, &camera);
             if (SUCCEEDED(hr)) {
+                failure_operation = L"IMFVirtualCamera::Start";
                 hr = camera->Start(nullptr);
                 camera->Release();
             }
@@ -139,16 +143,21 @@ int wmain(int argc, wchar_t** argv) {
         if (SUCCEEDED(hr)) std::wcout << L"Registered " << kFriendlyName << L" Windows Virtual Camera.\n";
     } else if (command == L"unregister") {
         IMFVirtualCamera* camera = nullptr;
+        failure_operation = L"MFCreateVirtualCamera";
         hr = OpenCamera(scope, &camera);
         if (SUCCEEDED(hr)) {
+            failure_operation = L"IMFVirtualCamera::Remove";
             hr = camera->Remove();
             camera->Release();
         }
-        if (SUCCEEDED(hr)) hr = RemoveComRegistration(scope);
+        if (SUCCEEDED(hr)) {
+            failure_operation = L"COM registration removal";
+            hr = RemoveComRegistration(scope);
+        }
         if (SUCCEEDED(hr)) std::wcout << L"Removed " << kFriendlyName << L" Windows Virtual Camera.\n";
     } else { PrintUsage(); hr = E_INVALIDARG; }
 
-    if (FAILED(hr)) PrintFailure(command, hr);
+    if (FAILED(hr)) PrintFailure(failure_operation, hr);
     MFShutdown();
     if (SUCCEEDED(co_hr)) CoUninitialize();
     return FAILED(hr) ? 1 : 0;
