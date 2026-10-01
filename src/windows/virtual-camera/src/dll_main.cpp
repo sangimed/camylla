@@ -31,9 +31,9 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved
     return TRUE;
 }
 
-extern "C" __declspec(dllexport) HRESULT WINAPI DllCanUnloadNow() { return S_FALSE; }
+STDAPI DllCanUnloadNow(void) { return S_FALSE; }
 
-extern "C" __declspec(dllexport) HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID* object) {
+STDAPI DllGetClassObject(REFCLSID clsid, REFIID iid, LPVOID* object) {
     if (object == nullptr) return E_POINTER;
     *object = nullptr;
     if (clsid != camylla::virtual_camera::win::kSourceClsid) return CLASS_E_CLASSNOTAVAILABLE;

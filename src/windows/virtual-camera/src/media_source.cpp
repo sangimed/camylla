@@ -65,7 +65,7 @@ public:
     STDMETHODIMP EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) override;
     STDMETHODIMP GetEvent(DWORD flags, IMFMediaEvent** event) override;
     STDMETHODIMP QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status,
-                            const PROPVARIANT* value) override;
+                            const PROPVARIANT* event_value) override;
     STDMETHODIMP GetMediaSource(IMFMediaSource** source) override;
     STDMETHODIMP GetStreamDescriptor(IMFStreamDescriptor** descriptor) override;
     STDMETHODIMP RequestSample(IUnknown* token) override;
@@ -92,7 +92,7 @@ public:
     STDMETHODIMP EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) override;
     STDMETHODIMP GetEvent(DWORD flags, IMFMediaEvent** event) override;
     STDMETHODIMP QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status,
-                            const PROPVARIANT* value) override;
+                            const PROPVARIANT* event_value) override;
     STDMETHODIMP GetCharacteristics(DWORD* characteristics) override;
     STDMETHODIMP CreatePresentationDescriptor(IMFPresentationDescriptor** descriptor) override;
     STDMETHODIMP Start(IMFPresentationDescriptor* descriptor, const GUID* time_format,
@@ -129,35 +129,35 @@ public:
     STDMETHODIMP DetachObject() override { return S_OK; }
 
 #define CAMYLLA_FORWARD_ATTRIBUTE(method, ...) return attributes_->method(__VA_ARGS__)
-    STDMETHODIMP GetItem(REFGUID key, PROPVARIANT* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetItem, key, value); }
+    STDMETHODIMP GetItem(REFGUID key, PROPVARIANT* item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetItem, key, item_value); }
     STDMETHODIMP GetItemType(REFGUID key, MF_ATTRIBUTE_TYPE* type) override { CAMYLLA_FORWARD_ATTRIBUTE(GetItemType, key, type); }
-    STDMETHODIMP CompareItem(REFGUID key, REFPROPVARIANT value, BOOL* result) override { CAMYLLA_FORWARD_ATTRIBUTE(CompareItem, key, value, result); }
+    STDMETHODIMP CompareItem(REFGUID key, REFPROPVARIANT item_value, BOOL* result) override { CAMYLLA_FORWARD_ATTRIBUTE(CompareItem, key, item_value, result); }
     STDMETHODIMP Compare(IMFAttributes* theirs, MF_ATTRIBUTES_MATCH_TYPE type, BOOL* result) override { CAMYLLA_FORWARD_ATTRIBUTE(Compare, theirs, type, result); }
-    STDMETHODIMP GetUINT32(REFGUID key, UINT32* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetUINT32, key, value); }
-    STDMETHODIMP GetUINT64(REFGUID key, UINT64* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetUINT64, key, value); }
-    STDMETHODIMP GetDouble(REFGUID key, double* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetDouble, key, value); }
-    STDMETHODIMP GetGUID(REFGUID key, GUID* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetGUID, key, value); }
+    STDMETHODIMP GetUINT32(REFGUID key, UINT32* out_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetUINT32, key, out_value); }
+    STDMETHODIMP GetUINT64(REFGUID key, UINT64* out_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetUINT64, key, out_value); }
+    STDMETHODIMP GetDouble(REFGUID key, double* out_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetDouble, key, out_value); }
+    STDMETHODIMP GetGUID(REFGUID key, GUID* out_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetGUID, key, out_value); }
     STDMETHODIMP GetStringLength(REFGUID key, UINT32* length) override { CAMYLLA_FORWARD_ATTRIBUTE(GetStringLength, key, length); }
-    STDMETHODIMP GetString(REFGUID key, LPWSTR value, UINT32 size, UINT32* length) override { CAMYLLA_FORWARD_ATTRIBUTE(GetString, key, value, size, length); }
-    STDMETHODIMP GetAllocatedString(REFGUID key, LPWSTR* value, UINT32* length) override { CAMYLLA_FORWARD_ATTRIBUTE(GetAllocatedString, key, value, length); }
+    STDMETHODIMP GetString(REFGUID key, LPWSTR out_value, UINT32 size, UINT32* length) override { CAMYLLA_FORWARD_ATTRIBUTE(GetString, key, out_value, size, length); }
+    STDMETHODIMP GetAllocatedString(REFGUID key, LPWSTR* out_value, UINT32* length) override { CAMYLLA_FORWARD_ATTRIBUTE(GetAllocatedString, key, out_value, length); }
     STDMETHODIMP GetBlobSize(REFGUID key, UINT32* size) override { CAMYLLA_FORWARD_ATTRIBUTE(GetBlobSize, key, size); }
-    STDMETHODIMP GetBlob(REFGUID key, UINT8* value, UINT32 size, UINT32* written) override { CAMYLLA_FORWARD_ATTRIBUTE(GetBlob, key, value, size, written); }
-    STDMETHODIMP GetAllocatedBlob(REFGUID key, UINT8** value, UINT32* size) override { CAMYLLA_FORWARD_ATTRIBUTE(GetAllocatedBlob, key, value, size); }
-    STDMETHODIMP GetUnknown(REFGUID key, REFIID iid, LPVOID* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetUnknown, key, iid, value); }
-    STDMETHODIMP SetItem(REFGUID key, REFPROPVARIANT value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetItem, key, value); }
+    STDMETHODIMP GetBlob(REFGUID key, UINT8* out_value, UINT32 size, UINT32* written) override { CAMYLLA_FORWARD_ATTRIBUTE(GetBlob, key, out_value, size, written); }
+    STDMETHODIMP GetAllocatedBlob(REFGUID key, UINT8** out_value, UINT32* size) override { CAMYLLA_FORWARD_ATTRIBUTE(GetAllocatedBlob, key, out_value, size); }
+    STDMETHODIMP GetUnknown(REFGUID key, REFIID iid, LPVOID* out_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetUnknown, key, iid, out_value); }
+    STDMETHODIMP SetItem(REFGUID key, REFPROPVARIANT item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetItem, key, item_value); }
     STDMETHODIMP DeleteItem(REFGUID key) override { CAMYLLA_FORWARD_ATTRIBUTE(DeleteItem, key); }
     STDMETHODIMP DeleteAllItems() override { CAMYLLA_FORWARD_ATTRIBUTE(DeleteAllItems); }
-    STDMETHODIMP SetUINT32(REFGUID key, UINT32 value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetUINT32, key, value); }
-    STDMETHODIMP SetUINT64(REFGUID key, UINT64 value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetUINT64, key, value); }
-    STDMETHODIMP SetDouble(REFGUID key, double value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetDouble, key, value); }
-    STDMETHODIMP SetGUID(REFGUID key, REFGUID value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetGUID, key, value); }
-    STDMETHODIMP SetString(REFGUID key, LPCWSTR value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetString, key, value); }
-    STDMETHODIMP SetBlob(REFGUID key, const UINT8* value, UINT32 size) override { CAMYLLA_FORWARD_ATTRIBUTE(SetBlob, key, value, size); }
-    STDMETHODIMP SetUnknown(REFGUID key, IUnknown* value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetUnknown, key, value); }
+    STDMETHODIMP SetUINT32(REFGUID key, UINT32 item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetUINT32, key, item_value); }
+    STDMETHODIMP SetUINT64(REFGUID key, UINT64 item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetUINT64, key, item_value); }
+    STDMETHODIMP SetDouble(REFGUID key, double item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetDouble, key, item_value); }
+    STDMETHODIMP SetGUID(REFGUID key, REFGUID item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetGUID, key, item_value); }
+    STDMETHODIMP SetString(REFGUID key, LPCWSTR item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetString, key, item_value); }
+    STDMETHODIMP SetBlob(REFGUID key, const UINT8* item_value, UINT32 size) override { CAMYLLA_FORWARD_ATTRIBUTE(SetBlob, key, item_value, size); }
+    STDMETHODIMP SetUnknown(REFGUID key, IUnknown* item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(SetUnknown, key, item_value); }
     STDMETHODIMP LockStore() override { CAMYLLA_FORWARD_ATTRIBUTE(LockStore); }
     STDMETHODIMP UnlockStore() override { CAMYLLA_FORWARD_ATTRIBUTE(UnlockStore); }
     STDMETHODIMP GetCount(UINT32* count) override { CAMYLLA_FORWARD_ATTRIBUTE(GetCount, count); }
-    STDMETHODIMP GetItemByIndex(UINT32 index, GUID* key, PROPVARIANT* value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetItemByIndex, index, key, value); }
+    STDMETHODIMP GetItemByIndex(UINT32 index, GUID* key, PROPVARIANT* item_value) override { CAMYLLA_FORWARD_ATTRIBUTE(GetItemByIndex, index, key, item_value); }
     STDMETHODIMP CopyAllItems(IMFAttributes* destination) override { CAMYLLA_FORWARD_ATTRIBUTE(CopyAllItems, destination); }
 #undef CAMYLLA_FORWARD_ATTRIBUTE
 
@@ -221,7 +221,7 @@ HRESULT CamyllaMediaStream::Shutdown() {
 STDMETHODIMP CamyllaMediaStream::BeginGetEvent(IMFAsyncCallback* callback, IUnknown* state) { return events_->BeginGetEvent(callback, state); }
 STDMETHODIMP CamyllaMediaStream::EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) { return events_->EndGetEvent(result, event); }
 STDMETHODIMP CamyllaMediaStream::GetEvent(DWORD flags, IMFMediaEvent** event) { return events_->GetEvent(flags, event); }
-STDMETHODIMP CamyllaMediaStream::QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status, const PROPVARIANT* value) { return events_->QueueEventParamVar(type, extended_type, status, value); }
+STDMETHODIMP CamyllaMediaStream::QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status, const PROPVARIANT* event_value) { return events_->QueueEventParamVar(type, extended_type, status, event_value); }
 STDMETHODIMP CamyllaMediaStream::GetMediaSource(IMFMediaSource** source) { if (source == nullptr) return E_POINTER; return parent_.CopyTo(source); }
 STDMETHODIMP CamyllaMediaStream::GetStreamDescriptor(IMFStreamDescriptor** descriptor) { if (descriptor == nullptr) return E_POINTER; return descriptor_.CopyTo(descriptor); }
 
@@ -257,7 +257,7 @@ STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
         FAILED(hr = sample->SetSampleTime(frame.timestamp_100ns)) ||
         FAILED(hr = sample->SetSampleDuration(FrameCadence(mode_.frames_per_second).DurationFor(frame_index_ - 1U)))) return hr;
     if (token != nullptr && FAILED(hr = sample->SetUnknown(MFSampleExtension_Token, token))) return hr;
-    return events_->QueueEventParamUnk(MEStreamSample, GUID_NULL, S_OK, sample.Get());
+    return events_->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, sample.Get());
 }
 
 HRESULT CamyllaMediaSource::Initialize() {
@@ -280,7 +280,7 @@ HRESULT CamyllaMediaSource::Initialize() {
 STDMETHODIMP CamyllaMediaSource::BeginGetEvent(IMFAsyncCallback* callback, IUnknown* state) { return events_->BeginGetEvent(callback, state); }
 STDMETHODIMP CamyllaMediaSource::EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) { return events_->EndGetEvent(result, event); }
 STDMETHODIMP CamyllaMediaSource::GetEvent(DWORD flags, IMFMediaEvent** event) { return events_->GetEvent(flags, event); }
-STDMETHODIMP CamyllaMediaSource::QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status, const PROPVARIANT* value) { return events_->QueueEventParamVar(type, extended_type, status, value); }
+STDMETHODIMP CamyllaMediaSource::QueueEvent(MediaEventType type, REFGUID extended_type, HRESULT status, const PROPVARIANT* event_value) { return events_->QueueEventParamVar(type, extended_type, status, event_value); }
 STDMETHODIMP CamyllaMediaSource::GetCharacteristics(DWORD* characteristics) { if (characteristics == nullptr) return E_POINTER; *characteristics = MFMEDIASOURCE_IS_LIVE; return S_OK; }
 
 STDMETHODIMP CamyllaMediaSource::CreatePresentationDescriptor(IMFPresentationDescriptor** descriptor) {

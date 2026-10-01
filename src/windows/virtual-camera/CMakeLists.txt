@@ -15,6 +15,7 @@ endif()
 
 if(WIN32)
     add_library(camylla_virtual_camera_source SHARED
+        src/camylla_virtual_camera_source.def
         src/dll_main.cpp
         src/media_source.cpp
     )
