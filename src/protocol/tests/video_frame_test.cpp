@@ -35,6 +35,8 @@ VideoFrame ExampleFrame(std::uint64_t sequence) {
         .sequence_number = sequence,
         .configuration_generation = 7,
         .capture_timestamp_us = 9'876'543,
+        .send_timestamp_us = 9'876'600,
+        .session_id = {std::byte{0x42}},
         .flags = static_cast<std::uint16_t>(VideoFrameFlag::key_frame),
         .payload = {std::byte{0x00}, std::byte{0x00}, std::byte{0x01}, std::byte{0x65}},
     };
@@ -103,6 +105,32 @@ void RejectsInvalidOutgoingFrames() {
     frame.flags = 0x8000;
     CheckProtocolError([&] { static_cast<void>(EncodeVideoFrame(frame)); },
                        "unknown outgoing flags must be rejected");
+    frame = ExampleFrame(1);
+    frame.flags = 0;
+    CheckProtocolError([&] { static_cast<void>(EncodeVideoFrame(frame)); },
+                       "frame kind is mandatory");
+    frame = ExampleFrame(1);
+    frame.message_type = 9;
+    CheckProtocolError([&] { static_cast<void>(EncodeVideoFrame(frame)); },
+                       "unknown message type must be rejected");
+}
+
+void RejectsVersionTypeAndTruncation() {
+    const auto example = EncodeVideoFrame(ExampleFrame(9));
+    auto wrong_version = example;
+    wrong_version[4] = std::byte{99};
+    VideoFrameParser version_parser;
+    CheckProtocolError([&] { static_cast<void>(version_parser.Push(wrong_version)); },
+                       "unsupported version must fail");
+    auto wrong_type = example;
+    wrong_type[35] = std::byte{9};
+    VideoFrameParser type_parser;
+    CheckProtocolError([&] { static_cast<void>(type_parser.Push(wrong_type)); },
+                       "unknown type must fail");
+    VideoFrameParser truncated_parser;
+    const auto frames = truncated_parser.Push(std::span(example).first(example.size() - 1));
+    Check(frames.empty() && truncated_parser.buffered_bytes() == example.size() - 1,
+          "truncated access unit must remain incomplete");
 }
 
 }  // namespace
@@ -113,5 +141,6 @@ int main() {
     RejectsMalformedInputAndStaysFailed();
     RejectsOversizedDeclarationBeforePayload();
     RejectsInvalidOutgoingFrames();
+    RejectsVersionTypeAndTruncation();
     return EXIT_SUCCESS;
 }

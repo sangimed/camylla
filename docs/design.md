@@ -1,6 +1,6 @@
 # Camylla living design
 
-Status: confirmed design baseline. Grill session concluded with shared understanding on 2026-10-01. Confirmed decisions are distinguished from proposed technical details and empirical questions. The repository now contains a Windows virtual-camera POC and portable protocol code; the POC's Windows registration, frame-server lifecycle, and application compatibility evidence remains uncollected. Technology selections are conditional on the stated proof gates; they are not evidence that performance or compatibility is already established.
+Status: living design baseline. The Windows M1 virtual-camera proof and physical S21 Ultra Android M2 producer proof are recorded in `docs/validation/`. M3 secure Android-to-Windows transport is current. Technology selections remain conditional on their remaining proof gates; one phone does not establish broad compatibility.
 
 ## 1. Product vision
 
@@ -44,7 +44,7 @@ All audio (capture, transport, playback, microphone permissions, virtual microph
 
 ## 6. Proposed architecture
 
-Accepted proposed direction: Android camera to MediaCodec H.264 encoder; authenticated local Wi-Fi transport; standalone desktop receive/decode/preview; Media Foundation software virtual-camera output. Detailed transport, native ABI, and IPC specifications remain open. Architecture is subject to the specified hardware/application proofs; no production code has started.
+Accepted direction: the physical S21 Ultra CameraX to MediaCodec H.264 surface path and Windows M1 Media Foundation camera direction passed their initial feasibility proofs. Authenticated local Wi-Fi transport and desktop receive/decode are M3 work. Preview, publication IPC, and product integration remain later work.
 
 Accepted implementation direction: Kotlin Android app; WinUI 3/C# desktop UI with narrow C++ media/virtual-camera components. One desktop user process owns connections, decoding, preview and settings. No separate Camylla daemon or Windows service in v1. The native virtual-camera source runs in Windows camera infrastructure and receives frames through bounded, access-controlled IPC; it does not host network processing.
 
@@ -66,7 +66,7 @@ The diagram shows responsibility boundaries, not yet finalized socket endpoints 
 
 ## 7. Android architecture
 
-Capture API evaluation strategy accepted: CameraX first, with Camera2 only for demonstrated requirements gaps. CameraX [Preview.SurfaceProvider](https://developer.android.com/reference/androidx/camera/core/Preview.SurfaceProvider) supports encoder-backed surfaces; its Recorder is not the only capture route. CameraX offers lifecycle/control abstractions but requested frame rate is a target; Camera2 offers explicit session/request control with more device-handling work. Gate: evaluate reliable 30-FPS surface encoding, controls, rotation, autofocus and screen-off. Evaluate optional 60 FPS without making it a reason by itself to escalate to Camera2. No proof code is yet authorized. Android 10+ is the provisional minimum, with device/capability testing rather than blanket compatibility promises.
+Capture API evaluation strategy: CameraX first, with Camera2 only for demonstrated requirements gaps. The S21 Ultra physical proof used CameraX `Preview.SurfaceProvider` with a MediaCodec encoder input surface and measured about 29.9 encoded FPS at rear 720p30. CameraX offers lifecycle/control abstractions but requested frame rate is a target; Camera2 offers explicit session/request control with more device-handling work. The CameraX-first direction survived M2. Detailed thermal/battery, other-mode, and device coverage remains later validation. Android 10+ is the provisional minimum, with device/capability testing rather than blanket compatibility promises.
 
 For 60 FPS, intersect per-camera target FPS ranges, encoder-compatible sizes, all output minimum frame durations, and encoder size/rate capabilities, then measure delivered frames. [StreamConfigurationMap](https://developer.android.com/reference/android/hardware/camera2/params/StreamConfigurationMap) and [VideoCapabilities](https://developer.android.com/reference/android/media/MediaCodecInfo.VideoCapabilities) provide relevant capability queries. [Constrained high-speed capture](https://developer.android.com/reference/android/hardware/camera2/CameraConstrainedHighSpeedCaptureSession) is intended for 120+ FPS, not the default 60-FPS path. Android foreground camera-service restrictions must shape session start/resume behavior: [official requirements](https://developer.android.com/develop/background-work/services/fgs/service-types).
 
@@ -207,17 +207,17 @@ Remaining empirical/design-detail questions, to resolve before their implementat
 7. Which artifact/runtime licenses, offline installer tool, trusted signing provider and release-key practices pass distribution review?
 8. Which exact healthy/impaired network fixtures and latency measurement setup will produce reviewable evidence?
 
-These are explicitly assigned proof/specification tasks, not claims of resolved compatibility or permission to write production code now. Final interview review confirmed the narrowed v1 scope and persistent current-user webcam UX. The Windows proof must establish how to deliver that behavior; revisit the relevant decision explicitly if it cannot.
+These remain proof/specification questions rather than claims of broad compatibility. Final interview review confirmed the narrowed v1 scope and persistent current-user webcam UX. The M1 Windows and M2 S21 Ultra feasibility results are recorded separately; M3 transport measurements must establish the next boundary.
 
 ## 21. Milestones from proof-of-concept to v1.0
 
-Sequence accepted; dates deliberately unset. No proofs or production implementation have started, and this design session does not authorize starting them.
+Sequence accepted; dates deliberately unset. M0, Windows M1, and physical S21 Ultra M2 feasibility work are complete. M3 transport is current; its physical end-to-end result remains pending.
 
 | Milestone | Work | Exit evidence |
 | --- | --- | --- |
 | M0: design baseline | Review scope, glossary, ADRs, protocol/pairing outlines and available test resources | Shared understanding; explicit unknowns and proof responsibilities |
 | M1: Windows feasibility | Synthetic MF source, target consumers, install/uninstall and native preview/WinUI deployment | Teams/Zoom/OBS can consume core modes; workable deployment/IPC seam; documented source lifetime behavior |
-| M2: Android feasibility | CameraX/MediaCodec H.264, basic controls and explicit service lifecycle on S21 Ultra | Stable 30-FPS baseline, screen-off and thermal/battery measurements; optional 60-FPS result recorded, not required |
+| M2: Android feasibility | CameraX/MediaCodec H.264, basic controls and explicit service lifecycle on S21 Ultra | Rear 720p30 produced about 29.9 encoded FPS and fully decodable H.264; lifecycle paths manually exercised; detailed other-mode and thermal/battery measurements remain later validation |
 | M3: secure end-to-end transport | Reviewed versioned protocol/pairing; TLS/TCP pipeline and network impairment | Authenticated operation, baseline latency, bounded buffers, recovery target; accept TCP or choose real-time alternative |
 | M4: product alpha | Focused setup, preview/controls/settings, errors, recovery and degradation UX | Complete first-use/repeat-use flows; no silent stale output or unsupported-control failures |
 | M5: wider alpha/beta | Second phone/integrated-GPU matrix; parser/security, runtime/license and packaging reviews | Recorded compatibility/60-minute results; ordinary offline install/upgrade/uninstall; release signing path established |

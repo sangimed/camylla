@@ -6,3 +6,6 @@ include(CTest)
 add_subdirectory(src/protocol)
 
 add_subdirectory(src/windows/virtual-camera)
+if(WIN32)
+    add_subdirectory(src/windows/receiver/native)
+endif()

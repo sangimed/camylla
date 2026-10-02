@@ -1,0 +1,7 @@
+add_library(camylla_mf_decoder SHARED mf_decoder.cpp)
+target_compile_features(camylla_mf_decoder PRIVATE cxx_std_20)
+target_compile_definitions(camylla_mf_decoder PRIVATE UNICODE _UNICODE)
+target_link_libraries(camylla_mf_decoder PRIVATE mfplat mf mfuuid wmcodecdspuuid ole32)
+if(MSVC)
+    target_compile_options(camylla_mf_decoder PRIVATE /W4 /WX /permissive-)
+endif()

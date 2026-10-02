@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Spinner
@@ -30,6 +31,9 @@ class MainActivity : Activity() {
     private lateinit var modes: Spinner
     private lateinit var stats: TextView
     private lateinit var zoom: SeekBar
+    private lateinit var host: EditText
+    private lateinit var pin: EditText
+    private lateinit var secret: EditText
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
@@ -60,6 +64,16 @@ class MainActivity : Activity() {
                 CaptureService.Mode.entries.map { it.label })
         }
         layout.addView(modes)
+        fun field(hint: String): EditText = EditText(this).also {
+            it.hint = hint
+            it.isSingleLine = true
+            layout.addView(it)
+        }
+        host = field("Windows PC LAN address (blank = local M2 proof)")
+        pin = field("Receiver certificate SHA-256 pin")
+        secret = field("Development session secret").apply {
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
         button("Start capture") { startWithPermission() }
         button("Stop capture") {
             startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
@@ -102,6 +116,9 @@ class MainActivity : Activity() {
             .setAction(CaptureService.ACTION_START)
             .putExtra(CaptureService.EXTRA_MODE, CaptureService.Mode.entries[modes.selectedItemPosition].name)
             .putExtra(CaptureService.EXTRA_LENS, requestedLens)
+            .putExtra(CaptureService.EXTRA_HOST, host.text.toString())
+            .putExtra(CaptureService.EXTRA_PIN, pin.text.toString())
+            .putExtra(CaptureService.EXTRA_SECRET, secret.text.toString())
         ContextCompat.startForegroundService(this, intent)
     }
 
@@ -143,6 +160,11 @@ class MainActivity : Activity() {
             Transform rotation: ${value.rotationDegrees}°  Thermal status: ${value.thermalStatus}
             Diagnostic bytes: ${value.sinkBytes}${if (value.sinkLimitReached) " (64 MiB cap reached)" else ""}
             Output: ${value.outputFile}
+            Network: ${value.network.state}${if (value.network.error.isNotEmpty()) " — ${value.network.error}" else ""}
+            Queued: ${value.network.queuedFrames}  Sent: ${value.network.sentFrames}  Bytes: ${value.network.sentBytes}
+            Queue depth/high-water: ${value.network.depth}/${value.network.highWater}
+            Resets: ${value.network.resets}  Dropped: ${value.network.droppedFrames}  Network errors: ${value.network.networkErrors}
+            Reconnect attempts: ${value.network.reconnectAttempts}  Last sequence: ${value.network.lastSequence}
         """.trimIndent()
     }
 

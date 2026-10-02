@@ -6,14 +6,14 @@ Detailed, executable work belongs in [GitHub Issues](https://github.com/sangimed
 
 ## Current focus
 
-### M2 — Android feasibility
+### M3 — Secure end-to-end transport
 
 **Status:** current  
-**Tracking:** [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13)
+**Tracking:** [#16 — M3: implement secure Android-to-Windows H.264 transport](https://github.com/sangimed/camylla/issues/16)
 
 M1 established that the selected Windows 11 Media Foundation software-camera direction is viable: the development camera registers, activates through Windows Frame Server, delivers deterministic NV12 frames to real consumers, supports the baseline 720p30 and 1080p30 modes, survives repeated consumer open/close cycles, and removes cleanly through the development control tool.
 
-M2 now isolates the Android side. The next proof is CameraX-first capture into a MediaCodec H.264 encoder surface on the primary physical phone, with a reliable 30 FPS baseline and lifecycle/thermal evidence before any production network transport is introduced.
+M2 validated CameraX-first capture into a MediaCodec H.264 encoder surface on the physical Samsung Galaxy S21 Ultra. The CameraX-first / MediaCodec direction survived that proof. M3 now targets authenticated TLS/TCP transport from that phone to a Windows Media Foundation decoder, with bounded freshness and recovery. Physical end-to-end evidence is still required before M3 can complete.
 
 ## Milestones
 
@@ -49,21 +49,23 @@ The M1 evidence is recorded in [`docs/validation/windows-virtual-camera-m1.md`](
 
 ### M2 — Android feasibility
 
-**Status:** current
+**Status:** complete
 
-- [ ] Build the CameraX-first capture proof.
-- [ ] Feed MediaCodec H.264 through a surface path.
-- [ ] Validate front/rear cameras and baseline controls.
-- [ ] Validate app switching, foreground-service lifecycle, and screen-off behavior.
-- [ ] Sustain the 30 FPS baseline on the primary physical test phone.
-- [ ] Measure thermal and battery behavior.
+- [x] Build the CameraX-first capture proof.
+- [x] Feed MediaCodec H.264 through a surface path.
+- [x] Manually exercise camera switching and baseline controls.
+- [x] Manually validate app switching, foreground-service lifecycle, and screen-off behavior.
+- [x] Measure about 29.9 encoded FPS at rear 720p30 on the primary physical phone.
+- [ ] Record detailed thermal and battery measurements in a longer follow-up run.
 - [ ] Record optional 60 FPS results without making them a release blocker.
 
-Tracking: [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13).
+The physical evidence and limits of this feasibility result are preserved in [the S21 Ultra validation record](docs/validation/android-m2-s21-ultra.md). Tracking: [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13).
 
 ### M3 — Secure end-to-end transport
 
-**Status:** planned
+**Status:** current
+
+Tracking: [#16 — M3: implement secure Android-to-Windows H.264 transport](https://github.com/sangimed/camylla/issues/16).
 
 - [ ] Complete the versioned protocol beyond video framing.
 - [ ] Define capability negotiation and selected-mode semantics.

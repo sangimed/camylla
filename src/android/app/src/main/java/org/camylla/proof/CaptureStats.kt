@@ -23,6 +23,7 @@ data class StatsSnapshot(
     val sinkLimitReached: Boolean = false,
     val outputFile: String = "",
     val error: String = "",
+    val network: NetworkProgress = NetworkProgress(),
 )
 
 /** Counts encoded access units, not requested camera frames. The gap count is diagnostic, not proof of a dropped frame. */
