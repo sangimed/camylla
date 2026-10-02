@@ -33,6 +33,18 @@ void PrintFailure(std::wstring_view operation, HRESULT hr) {
     }
 }
 
+void RecordFailure(std::wstring_view operation, HRESULT result, HRESULT& hr,
+                   std::wstring_view& failure_operation) {
+    if (FAILED(result)) {
+        if (FAILED(hr)) {
+            PrintFailure(operation, result);
+        } else {
+            hr = result;
+            failure_operation = operation;
+        }
+    }
+}
+
 std::optional<Scope> ParseScope(std::wstring_view value) {
     if (value == L"current-user") return Scope::current_user;
     if (value == L"all-users") return Scope::all_users;
@@ -143,9 +155,14 @@ int wmain(int argc, wchar_t** argv) {
             if (SUCCEEDED(hr)) {
                 failure_operation = L"IMFVirtualCamera::Start";
                 hr = camera->Start(nullptr);
+                const bool started = SUCCEEDED(hr);
+                RecordFailure(L"IMFVirtualCamera::Shutdown", camera->Shutdown(), hr,
+                              failure_operation);
                 camera->Release();
+                if (!started) static_cast<void>(RemoveComRegistration());
+            } else {
+                static_cast<void>(RemoveComRegistration());
             }
-            if (FAILED(hr)) static_cast<void>(RemoveComRegistration());
         }
         if (SUCCEEDED(hr)) std::wcout << L"Registered " << kFriendlyName << L" Windows Virtual Camera.\n";
     } else if (command == L"unregister") {
@@ -153,13 +170,20 @@ int wmain(int argc, wchar_t** argv) {
         failure_operation = L"MFCreateVirtualCamera";
         hr = OpenCamera(scope, &camera);
         if (SUCCEEDED(hr)) {
-            failure_operation = L"IMFVirtualCamera::Remove";
-            hr = camera->Remove();
+            failure_operation = L"IMFVirtualCamera::Stop";
+            hr = camera->Stop();
+            if (SUCCEEDED(hr)) {
+                failure_operation = L"IMFVirtualCamera::Remove";
+                hr = camera->Remove();
+            }
+            const bool removed = SUCCEEDED(hr);
+            RecordFailure(L"IMFVirtualCamera::Shutdown", camera->Shutdown(), hr,
+                          failure_operation);
             camera->Release();
-        }
-        if (SUCCEEDED(hr)) {
-            failure_operation = L"COM registration removal";
-            hr = RemoveComRegistration();
+            if (removed) {
+                RecordFailure(L"COM registration removal", RemoveComRegistration(), hr,
+                              failure_operation);
+            }
         }
         if (SUCCEEDED(hr)) std::wcout << L"Removed " << kFriendlyName << L" Windows Virtual Camera.\n";
     } else if (command == L"diagnose-source") {
