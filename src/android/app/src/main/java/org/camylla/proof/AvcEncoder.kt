@@ -1,0 +1,138 @@
+package org.camylla.proof
+
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.Surface
+import java.io.File
+import java.nio.ByteBuffer
+
+data class EncodedProgress(
+    val frames: Long, val keyframes: Long, val fps: Double, val timestampUs: Long,
+    val timestampGaps: Long, val sinkBytes: Long, val sinkLimitReached: Boolean,
+)
+
+/** Surface input and output draining are kept separate from CameraX session ownership. */
+class AvcEncoder(
+    width: Int,
+    height: Int,
+    output: File,
+    private val onUpdate: (EncodedProgress) -> Unit,
+    private val onError: (String) -> Unit,
+) : AutoCloseable {
+    private val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+    private val counter = FrameCounter()
+    private val sink = DiagnosticSink(output)
+    private val callbackHandler = Handler(Looper.getMainLooper())
+    private val bitrate = if (width * height > 1280 * 720) 6_000_000 else 3_000_000
+    val codecName: String = codec.name
+    val configuredBitrate: Int get() = bitrate
+    val surface: Surface
+    @Volatile private var stopping = false
+    private val drainThread: Thread
+
+    init {
+        try {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            }
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            surface = codec.createInputSurface()
+            codec.start()
+        } catch (error: Exception) {
+            sink.close()
+            codec.release()
+            throw error
+        }
+        drainThread = Thread(::drain, "camylla-avc-drain").apply { start() }
+    }
+
+    private fun drain() {
+        val info = MediaCodec.BufferInfo()
+        var deadline = Long.MAX_VALUE
+        var configWritten = false
+        try {
+            while (true) {
+                if (stopping && deadline == Long.MAX_VALUE) deadline = System.nanoTime() + 3_000_000_000L
+                if (System.nanoTime() > deadline) {
+                    Log.w(TAG, "Encoder EOS timeout")
+                    break
+                }
+                when (val index = codec.dequeueOutputBuffer(info, 100_000)) {
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        val format = codec.outputFormat
+                        Log.i(TAG, "Encoder format: $format")
+                        var hasConfig = false
+                        for (key in listOf("csd-0", "csd-1")) {
+                            format.getByteBuffer(key)?.let {
+                                sink.writeAvc(it.duplicate())
+                                hasConfig = true
+                            }
+                        }
+                        configWritten = configWritten || hasConfig
+                    }
+                    MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                    else -> if (index >= 0) {
+                        try {
+                            val data = codec.getOutputBuffer(index)
+                            if (data != null && info.size > 0) {
+                                data.position(info.offset)
+                                data.limit(info.offset + info.size)
+                                if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                                    if (!configWritten) {
+                                        sink.writeAvc(data.slice())
+                                        configWritten = true
+                                    }
+                                } else {
+                                    sink.writeAvc(data.slice())
+                                    if (info.flags and MediaCodec.BUFFER_FLAG_PARTIAL_FRAME != 0) continue
+                                    counter.add(info.presentationTimeUs, info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0)
+                                    if (counter.frames % 30L == 0L) {
+                                        Log.i(TAG, "frames=${counter.frames} fps=${"%.1f".format(counter.fps())} ptsUs=${counter.lastTimestampUs} gaps=${counter.timestampGaps} sinkBytes=${sink.bytes}")
+                                    }
+                                    if (counter.frames % 10L == 0L) {
+                                        val progress = EncodedProgress(
+                                            counter.frames, counter.keyframes, counter.fps(),
+                                            counter.lastTimestampUs, counter.timestampGaps,
+                                            sink.bytes, sink.limitReached,
+                                        )
+                                        callbackHandler.post { onUpdate(progress) }
+                                    }
+                                }
+                            }
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+                        } finally {
+                            codec.releaseOutputBuffer(index, false)
+                        }
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            Log.e(TAG, "Encoder drain failed", error)
+            callbackHandler.post { onError("Encoder: ${error.message}") }
+        } finally {
+            sink.close()
+        }
+    }
+
+    override fun close() {
+        if (!stopping) {
+            stopping = true
+            try { codec.signalEndOfInputStream() } catch (error: Exception) { Log.w(TAG, "EOS signal failed", error) }
+        }
+        drainThread.join(4_000)
+        if (drainThread.isAlive) Log.e(TAG, "Drain did not finish before encoder release")
+        runCatching { codec.stop() }.onFailure { Log.e(TAG, "Encoder stop failed", it) }
+        runCatching { codec.release() }.onFailure { Log.e(TAG, "Encoder release failed", it) }
+        surface.release()
+    }
+
+    companion object { private const val TAG = "CamyllaProof" }
+}

@@ -2,7 +2,7 @@
 
 Camylla aims to turn an Android phone into a webcam for Windows video meetings, with a standalone desktop app and a local Wi-Fi connection.
 
-**Status: early implementation.** The repository contains the first portable protocol component and a Windows-only virtual-camera POC alongside the product design, glossary, and architecture decisions. The POC still requires Windows hardware and target-application validation; there is no desktop application, installer, or release.
+**Status: early implementation.** The repository contains the portable protocol component, a validated Windows virtual-camera POC, and an Android capture/encoder feasibility proof. The Android proof still requires physical S21 Ultra validation; there is no desktop application, installer, or release.
 
 ## Planned experience
 
@@ -42,10 +42,13 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 - [Reference-project inspection](docs/reference-projects.md): source research and dependency-review notes.
 - [Video wire protocol v1 draft](docs/protocol-v1.md): bounded framing for H.264 access units.
 - [Windows virtual-camera POC](docs/windows-virtual-camera-poc.md): prerequisites, build, registration, smoke test, removal, troubleshooting, architecture, and M1 evidence limits.
+- [Android M2 proof and S21 Ultra checklist](docs/validation/android-m2-s21-ultra.md): build/install, local H.264 diagnostics, and pending physical validation.
 
 ## Build and test
 
 For the Windows virtual-camera POC, follow the complete [Windows developer quick start](docs/windows-virtual-camera-poc.md#windows-developer-quick-start). It covers installing the prerequisites from the versioned [`.vsconfig`](.vsconfig), Visual Studio 2022 x64 configuration, build, tests, current-user registration, the first OBS smoke test, troubleshooting, and clean removal.
+
+For the Android proof, open `src/android` in Android Studio or follow the [S21 Ultra build and validation guide](docs/validation/android-m2-s21-ultra.md).
 
 The initial dependency-free C++20 protocol library remains portable so its behavior can also be checked on non-Windows development hosts:
 
@@ -57,7 +60,7 @@ ctest --test-dir build --output-on-failure
 
 ## Roadmap
 
-The current focus is **M1: Windows virtual-camera feasibility**. Track the concrete task in [issue #2](https://github.com/sangimed/camylla/issues/2) and see [ROADMAP.md](ROADMAP.md) for milestone status and the planned path to v1.0.
+The current focus is **M2: Android feasibility**. Track the proof and physical validation in [issue #13](https://github.com/sangimed/camylla/issues/13) and see [ROADMAP.md](ROADMAP.md) for milestone status and the planned path to v1.0.
 
 The detailed technical gates and exit criteria remain in the [living design](docs/design.md#21-milestones-from-proof-of-concept-to-v10). Dates are deliberately unset.
 
