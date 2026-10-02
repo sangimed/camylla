@@ -6,17 +6,14 @@ Detailed, executable work belongs in [GitHub Issues](https://github.com/sangimed
 
 ## Current focus
 
-### M1 — Windows virtual-camera feasibility
+### M2 — Android feasibility
 
-**Status:** partially validated — Windows runtime evidence pending  
-**Tracking:** [#2 — M1: validate Windows virtual camera feasibility](https://github.com/sangimed/camylla/issues/2)  
-**POC implementation:** [#4 — poc: validate Windows virtual camera feasibility](https://github.com/sangimed/camylla/pull/4)
+**Status:** current  
+**Tracking:** [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13)
 
-The first Windows virtual-camera implementation now exists: a native Media Foundation source, a registration/removal control tool, deterministic NV12 synthetic frames, and portable tests for frame layout and cadence.
+M1 established that the selected Windows 11 Media Foundation software-camera direction is viable: the development camera registers, activates through Windows Frame Server, delivers deterministic NV12 frames to real consumers, supports the baseline 720p30 and 1080p30 modes, survives repeated consumer open/close cycles, and removes cleanly through the development control tool.
 
-The central feasibility gate is still open because the POC has not yet been built and exercised on Windows 11. M1 still needs evidence for registration/activation, source lifetime, 720p30/1080p30 delivery through the Windows camera pipeline, UAC/deployment behavior, and Teams/Zoom/OBS compatibility.
-
-M1 is complete only when there is recorded Windows evidence that the selected Media Foundation approach is viable for Camylla's intended desktop experience.
+M2 now isolates the Android side. The next proof is CameraX-first capture into a MediaCodec H.264 encoder surface on the primary physical phone, with a reliable 30 FPS baseline and lifecycle/thermal evidence before any production network transport is introduced.
 
 ## Milestones
 
@@ -35,21 +32,24 @@ The design remains a living document. Completing M0 does not mean every implemen
 
 ### M1 — Windows feasibility
 
-**Status:** current — partially validated
+**Status:** complete
 
 - [x] Implement the Windows Media Foundation virtual-camera POC and development registration tool.
 - [x] Implement and test deterministic synthetic offline/test frames.
-- [ ] Prove Media Foundation virtual-camera registration and activation on Windows 11.
-- [ ] Validate 720p30 and 1080p30 through the real Windows camera pipeline.
-- [ ] Validate repeated consumer open/close/reopen behavior.
-- [ ] Determine source lifetime and registration model from observed Windows behavior.
-- [ ] Determine actual UAC/elevation/deployment requirements.
-- [ ] Test Teams, Zoom, and OBS with recorded versions.
-- [ ] Decide whether the current Media Foundation direction survives the completed proof.
+- [x] Prove Media Foundation virtual-camera registration and activation on Windows 11.
+- [x] Validate 720p30 and 1080p30 through the real Windows camera pipeline.
+- [x] Validate repeated consumer open/close/reopen behavior.
+- [x] Establish the development registration/deployment model for the selected current-user camera path.
+- [x] Determine the observed elevation requirement for machine-wide COM source deployment.
+- [x] Record consumer results, including explicitly untested targets where versioned evidence was not collected.
+- [x] Validate clean current-user removal and COM cleanup.
+- [x] Keep the Media Foundation direction after the completed feasibility proof.
+
+The M1 evidence is recorded in [`docs/validation/windows-virtual-camera-m1.md`](docs/validation/windows-virtual-camera-m1.md). Reboot persistence, all-users scope, and additional application/version coverage remain useful later compatibility/release evidence rather than blockers for starting M2.
 
 ### M2 — Android feasibility
 
-**Status:** planned
+**Status:** current
 
 - [ ] Build the CameraX-first capture proof.
 - [ ] Feed MediaCodec H.264 through a surface path.
@@ -58,6 +58,8 @@ The design remains a living document. Completing M0 does not mean every implemen
 - [ ] Sustain the 30 FPS baseline on the primary physical test phone.
 - [ ] Measure thermal and battery behavior.
 - [ ] Record optional 60 FPS results without making them a release blocker.
+
+Tracking: [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13).
 
 ### M3 — Secure end-to-end transport
 
