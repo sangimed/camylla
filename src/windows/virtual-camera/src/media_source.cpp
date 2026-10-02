@@ -17,6 +17,8 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <atomic>
+#include <cwchar>
 
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::RuntimeClass;
@@ -31,6 +33,14 @@ const CLSID kSourceClsid = {0xca9f0b23, 0xc7e0, 0x42c7, {0x94, 0xb4, 0x2d, 0x6a,
 namespace {
 
 enum class SourceState { stopped, started, shutdown };
+
+HRESULT LogSampleFailure(const wchar_t* step, HRESULT hr) {
+    wchar_t message[192]{};
+    swprintf_s(message, L"Camylla camera: RequestSample %s failed pid=%lu hr=0x%08lX\n",
+               step, GetCurrentProcessId(), static_cast<unsigned long>(hr));
+    OutputDebugStringW(message);
+    return hr;
+}
 
 class CamyllaMediaSource;
 
@@ -77,6 +87,7 @@ public:
     HRESULT Stop(bool queue_event);
     HRESULT Shutdown();
     HRESULT GetAttributes(IMFAttributes** attributes);
+    HRESULT SetSampleAllocator(IMFVideoSampleAllocator* allocator);
 
     STDMETHODIMP BeginGetEvent(IMFAsyncCallback* callback, IUnknown* state) override;
     STDMETHODIMP EndGetEvent(IMFAsyncResult* result, IMFMediaEvent** event) override;
@@ -95,6 +106,9 @@ private:
     ComPtr<IMFMediaEventQueue> events_;
     ComPtr<IMFStreamDescriptor> descriptor_;
     ComPtr<IMFAttributes> attributes_;
+    ComPtr<IMFVideoSampleAllocator> allocator_;
+    std::atomic<std::uint64_t> requests_{0};
+    std::atomic<std::uint64_t> delivered_{0};
     std::unique_ptr<SyntheticFrameProvider> provider_;
     VideoMode mode_{};
     std::uint64_t frame_index_{};
@@ -226,13 +240,26 @@ HRESULT CamyllaMediaStream::Start(IMFMediaType* type) {
     if (!IsSupportedMode(mode)) return MF_E_INVALIDMEDIATYPE;
     std::lock_guard lock(mutex_);
     if (shutdown_) return MF_E_SHUTDOWN;
+    if (!allocator_) return MF_E_NOT_INITIALIZED;
+    if (FAILED(hr = allocator_->InitializeSampleAllocator(10, type))) return hr;
     mode_ = mode;
     provider_ = std::make_unique<SyntheticFrameProvider>(mode);
     frame_index_ = 0;
     next_deadline_ = std::chrono::steady_clock::now();
     started_ = true;
     stream_state_ = MF_STREAM_STATE_RUNNING;
+    OutputDebugStringW(L"Camylla camera: stream started with provided allocator\n");
     return events_->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr);
+}
+
+HRESULT CamyllaMediaStream::SetSampleAllocator(IMFVideoSampleAllocator* allocator) {
+    std::lock_guard lock(mutex_);
+    if (shutdown_) return MF_E_SHUTDOWN;
+    if (started_) return MF_E_INVALIDREQUEST;
+    allocator_ = allocator;
+    OutputDebugStringW(allocator ? L"Camylla camera: provided allocator installed\n"
+                                  : L"Camylla camera: provided allocator cleared\n");
+    return S_OK;
 }
 
 HRESULT CamyllaMediaStream::Stop(bool queue_event) {
@@ -251,6 +278,7 @@ HRESULT CamyllaMediaStream::Shutdown() {
     started_ = false;
     stream_state_ = MF_STREAM_STATE_STOPPED;
     provider_.reset();
+    allocator_.Reset();
     parent_.Reset();
     descriptor_.Reset();
     attributes_.Reset();
@@ -303,38 +331,69 @@ STDMETHODIMP CamyllaMediaStream::GetStreamState(MF_STREAM_STATE* state) {
 }
 
 STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
+    const auto request = ++requests_;
+    if (request <= 5 || request % 100 == 0) {
+        wchar_t message[160]{};
+        swprintf_s(message, L"Camylla camera: RequestSample pid=%lu requests=%llu delivered=%llu\n",
+                   GetCurrentProcessId(), static_cast<unsigned long long>(request),
+                   static_cast<unsigned long long>(delivered_.load()));
+        OutputDebugStringW(message);
+    }
     std::unique_lock lock(mutex_);
-    if (shutdown_) return MF_E_SHUTDOWN;
-    if (!started_ || !provider_ || stream_state_ != MF_STREAM_STATE_RUNNING) return MF_E_INVALIDREQUEST;
+    if (shutdown_) return LogSampleFailure(L"state", MF_E_SHUTDOWN);
+    if (!started_ || !provider_ || stream_state_ != MF_STREAM_STATE_RUNNING)
+        return LogSampleFailure(L"state", MF_E_INVALIDREQUEST);
     const auto now = std::chrono::steady_clock::now();
     const auto deadline = next_deadline_;
     const auto frame_duration = std::chrono::nanoseconds(1'000'000'000LL / mode_.frames_per_second);
     next_deadline_ = (now > deadline ? now : deadline) + frame_duration;
-    const auto frame = provider_->NextFrame(frame_index_++);
+    const auto frame_number = frame_index_++;
+    const auto frame = provider_->NextFrame(frame_number);
+    auto allocator = allocator_;
     lock.unlock();
     if (now < deadline) std::this_thread::sleep_until(deadline);
     {
         std::lock_guard state_lock(mutex_);
-        if (shutdown_) return MF_E_SHUTDOWN;
-        if (!started_ || stream_state_ != MF_STREAM_STATE_RUNNING) return MF_E_INVALIDREQUEST;
+        if (shutdown_) return LogSampleFailure(L"state after wait", MF_E_SHUTDOWN);
+        if (!started_ || stream_state_ != MF_STREAM_STATE_RUNNING)
+            return LogSampleFailure(L"state after wait", MF_E_INVALIDREQUEST);
     }
 
-    ComPtr<IMFMediaBuffer> buffer;
-    HRESULT hr = MFCreateMemoryBuffer(static_cast<DWORD>(frame.bytes.size()), &buffer);
-    if (FAILED(hr)) return hr;
-    BYTE* bytes = nullptr;
-    DWORD capacity = 0;
-    if (FAILED(hr = buffer->Lock(&bytes, &capacity, nullptr))) return hr;
-    if (capacity < frame.bytes.size()) { buffer->Unlock(); return E_UNEXPECTED; }
-    std::copy(frame.bytes.begin(), frame.bytes.end(), bytes);
-    buffer->Unlock();
-    if (FAILED(hr = buffer->SetCurrentLength(static_cast<DWORD>(frame.bytes.size())))) return hr;
+    if (!allocator) return LogSampleFailure(L"allocator", MF_E_NOT_INITIALIZED);
     ComPtr<IMFSample> sample;
-    if (FAILED(hr = MFCreateSample(&sample)) || FAILED(hr = sample->AddBuffer(buffer.Get())) ||
-        FAILED(hr = sample->SetSampleTime(frame.timestamp_100ns)) ||
-        FAILED(hr = sample->SetSampleDuration(FrameCadence(mode_.frames_per_second).DurationFor(frame_index_ - 1U)))) return hr;
-    if (token != nullptr && FAILED(hr = sample->SetUnknown(MFSampleExtension_Token, token))) return hr;
-    return events_->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, sample.Get());
+    HRESULT hr = allocator->AllocateSample(&sample);
+    if (FAILED(hr)) return LogSampleFailure(L"AllocateSample", hr);
+    ComPtr<IMFMediaBuffer> buffer;
+    if (FAILED(hr = sample->GetBufferByIndex(0, &buffer))) return LogSampleFailure(L"GetBufferByIndex", hr);
+    ComPtr<IMF2DBuffer2> buffer2d;
+    if (FAILED(hr = buffer.As(&buffer2d))) return LogSampleFailure(L"IMF2DBuffer2", hr);
+    BYTE* scanline = nullptr;
+    BYTE* start = nullptr;
+    LONG pitch = 0;
+    DWORD capacity = 0;
+    if (FAILED(hr = buffer2d->Lock2DSize(MF2DBuffer_LockFlags_Write, &scanline, &pitch, &start, &capacity)))
+        return LogSampleFailure(L"Lock2DSize", hr);
+    const auto stride = static_cast<std::size_t>(pitch);
+    const auto rows = static_cast<std::size_t>(mode_.height) * 3U / 2U;
+    if (pitch < static_cast<LONG>(mode_.width) || scanline < start ||
+        static_cast<std::size_t>(scanline - start) + stride * rows > capacity) {
+        buffer2d->Unlock2D();
+        return LogSampleFailure(L"NV12 buffer capacity", MF_E_BUFFERTOOSMALL);
+    }
+    for (std::size_t row = 0; row < rows; ++row) {
+        std::copy_n(frame.bytes.data() + row * mode_.width, mode_.width, scanline + row * stride);
+    }
+    if (FAILED(hr = buffer2d->Unlock2D())) return LogSampleFailure(L"Unlock2D", hr);
+    if (FAILED(hr = buffer->SetCurrentLength(static_cast<DWORD>(frame.bytes.size()))) ||
+        FAILED(hr = sample->SetSampleTime(MFGetSystemTime())) ||
+        FAILED(hr = sample->SetSampleDuration(FrameCadence(mode_.frames_per_second).DurationFor(frame_number))))
+        return LogSampleFailure(L"sample metadata", hr);
+    if (token != nullptr && FAILED(hr = sample->SetUnknown(MFSampleExtension_Token, token)))
+        return LogSampleFailure(L"sample token", hr);
+    hr = events_->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, sample.Get());
+    if (SUCCEEDED(hr)) ++delivered_;
+    else LogSampleFailure(L"MEMediaSample event", hr);
+    return hr;
 }
 
 HRESULT CamyllaMediaSource::Initialize(IMFAttributes* activation_attributes) {
@@ -470,18 +529,20 @@ STDMETHODIMP CamyllaMediaSource::GetAllocatorUsage(DWORD stream_id, DWORD* input
     if (state_ == SourceState::shutdown) return MF_E_SHUTDOWN;
     if (stream_id != 0) return MF_E_INVALIDSTREAMNUMBER;
     *input_stream_id = stream_id;
-    // RequestSample creates CPU-backed samples; no pipeline allocator is consumed.
-    *usage = MFSampleAllocatorUsage_UsesCustomAllocator;
+    *usage = MFSampleAllocatorUsage_UsesProvidedAllocator;
     return S_OK;
 }
 
 STDMETHODIMP CamyllaMediaSource::SetDefaultAllocator(DWORD stream_id, IUnknown* allocator) {
-    UNREFERENCED_PARAMETER(allocator);
     std::lock_guard lock(mutex_);
     if (state_ == SourceState::shutdown) return MF_E_SHUTDOWN;
     if (stream_id != 0) return MF_E_INVALIDSTREAMNUMBER;
-    // The advertised custom-allocator mode does not accept a pipeline allocator.
-    return MF_E_INVALIDREQUEST;
+    ComPtr<IMFVideoSampleAllocator> video_allocator;
+    if (allocator != nullptr) {
+        const HRESULT hr = allocator->QueryInterface(IID_PPV_ARGS(&video_allocator));
+        if (FAILED(hr)) return hr;
+    }
+    return stream_->SetSampleAllocator(video_allocator.Get());
 }
 
 }  // namespace

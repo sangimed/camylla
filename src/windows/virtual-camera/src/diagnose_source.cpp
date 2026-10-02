@@ -1,5 +1,6 @@
 #include "diagnose_source.h"
 #include "media_source.h"
+#include "camylla/virtual_camera/video_mode.h"
 
 #include <mfapi.h>
 #include <mferror.h>
@@ -10,6 +11,8 @@
 
 #include <iostream>
 #include <memory>
+#include <chrono>
+#include <thread>
 
 using Microsoft::WRL::ComPtr;
 
@@ -99,7 +102,8 @@ HRESULT DiagnoseSource(const std::filesystem::path& dll_path) {
                 ComPtr<IMFActivate> direct;
                 hr = factory->CreateInstance(nullptr, IID_PPV_ARGS(&direct));
                 Report(L"IClassFactory::CreateInstance(IMFActivate)", hr, __uuidof(IMFActivate));
-                if (!activate && SUCCEEDED(hr)) activate = direct;
+                // Exercise the requested DLL even when Frame Server still has the registered DLL loaded.
+                if (SUCCEEDED(hr)) activate = direct;
             }
         }
         // Keep the module loaded while COM objects from it may still exist.
@@ -138,6 +142,7 @@ HRESULT DiagnoseSource(const std::filesystem::path& dll_path) {
     Report(L"IMFPresentationDescriptor::GetStreamDescriptorCount", hr);
     if (FAILED(hr)) return hr;
     std::wcout << L"  streams=" << count << L'\n';
+    ComPtr<IMFMediaType> selected_type;
     for (DWORD index = 0; index < count; ++index) {
         BOOL selected = FALSE;
         ComPtr<IMFStreamDescriptor> stream_descriptor;
@@ -153,6 +158,8 @@ HRESULT DiagnoseSource(const std::filesystem::path& dll_path) {
         hr = stream_descriptor->GetMediaTypeHandler(&handler);
         Report(L"GetMediaTypeHandler", hr);
         if (SUCCEEDED(hr)) {
+            hr = handler->GetCurrentMediaType(&selected_type);
+            Report(L"GetCurrentMediaType", hr);
             DWORD type_count = 0;
             hr = handler->GetMediaTypeCount(&type_count);
             Report(L"GetMediaTypeCount", hr);
@@ -178,6 +185,20 @@ HRESULT DiagnoseSource(const std::filesystem::path& dll_path) {
             if (SUCCEEDED(hr)) std::wcout << L"  usage=" << usage << L'\n';
         }
     }
+    if (!selected_type) return E_UNEXPECTED;
+    UINT32 width = 0, height = 0;
+    hr = MFGetAttributeSize(selected_type.Get(), MF_MT_FRAME_SIZE, &width, &height);
+    Report(L"MFGetAttributeSize(MF_MT_FRAME_SIZE)", hr);
+    if (FAILED(hr)) return hr;
+    const auto expected_size = camylla::virtual_camera::Nv12FrameSize({width, height, 30});
+    std::wcout << L"  expected NV12 bytes=" << expected_size << L'\n';
+    ComPtr<IMFVideoSampleAllocator> sample_allocator;
+    hr = MFCreateVideoSampleAllocatorEx(IID_PPV_ARGS(&sample_allocator));
+    Report(L"MFCreateVideoSampleAllocatorEx", hr);
+    if (FAILED(hr)) return hr;
+    hr = allocator->SetDefaultAllocator(0, sample_allocator.Get());
+    Report(L"IMFSampleAllocatorControl::SetDefaultAllocator", hr);
+    if (FAILED(hr)) return hr;
     PROPVARIANT position{};
     PropVariantInit(&position);
     hr = source->Start(descriptor.Get(), nullptr, &position);
@@ -188,6 +209,13 @@ HRESULT DiagnoseSource(const std::filesystem::path& dll_path) {
         hr = source->GetEvent(MF_EVENT_FLAG_NO_WAIT, &event);
         Report(L"IMFMediaSource::GetEvent", hr);
         if (SUCCEEDED(hr)) {
+            MediaEventType event_type{};
+            hr = event->GetType(&event_type);
+            Report(L"IMFMediaEvent::GetType(source)", hr);
+            if (FAILED(hr) || event_type != MENewStream) {
+                diagnosis_hr = FAILED(hr) ? hr : E_UNEXPECTED;
+                Report(L"MENewStream event type", diagnosis_hr);
+            }
             ComPtr<IUnknown> stream_unknown;
             PROPVARIANT value{};
             PropVariantInit(&value);
@@ -204,11 +232,84 @@ HRESULT DiagnoseSource(const std::filesystem::path& dll_path) {
                 CheckInterface(stream_unknown.Get(), L"stream IMFMediaStream", std::addressof(stream));
                 CheckInterface(stream_unknown.Get(), L"stream IMFMediaStream2", std::addressof(stream2));
                 if (!stream || !stream2) diagnosis_hr = E_NOINTERFACE;
+                if (stream && SUCCEEDED(diagnosis_hr)) {
+                    hr = stream->RequestSample(nullptr);
+                    Report(L"IMFMediaStream::RequestSample", hr);
+                    if (FAILED(hr)) diagnosis_hr = hr;
+                    if (SUCCEEDED(hr)) {
+                        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+                        bool received = false;
+                        while (std::chrono::steady_clock::now() < deadline) {
+                            ComPtr<IMFMediaEvent> stream_event;
+                            hr = stream->GetEvent(MF_EVENT_FLAG_NO_WAIT, &stream_event);
+                            if (hr == MF_E_NO_EVENTS_AVAILABLE) {
+                                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                                continue;
+                            }
+                            Report(L"IMFMediaStream::GetEvent", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            MediaEventType type{};
+                            hr = stream_event->GetType(&type);
+                            Report(L"IMFMediaEvent::GetType(stream)", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            std::wcout << L"  stream event type=" << type << L'\n';
+                            if (type != MEMediaSample) continue;
+                            received = true;
+                            PROPVARIANT sample_value{};
+                            PropVariantInit(&sample_value);
+                            hr = stream_event->GetValue(&sample_value);
+                            Report(L"MEMediaSample::GetValue", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            ComPtr<IUnknown> sample_unknown;
+                            if (sample_value.vt == VT_UNKNOWN && sample_value.punkVal) sample_unknown = sample_value.punkVal;
+                            PropVariantClear(&sample_value);
+                            if (!sample_unknown) { diagnosis_hr = E_NOINTERFACE; Report(L"MEMediaSample event object", diagnosis_hr); break; }
+                            ComPtr<IMFSample> sample;
+                            hr = sample_unknown.As(&sample);
+                            Report(L"MEMediaSample IMFSample", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            DWORD buffer_count = 0;
+                            hr = sample->GetBufferCount(&buffer_count);
+                            Report(L"IMFSample::GetBufferCount", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            std::wcout << L"  buffers=" << buffer_count << L'\n';
+                            if (buffer_count != 1) { diagnosis_hr = E_UNEXPECTED; Report(L"one NV12 buffer", diagnosis_hr); break; }
+                            ComPtr<IMFMediaBuffer> buffer;
+                            hr = sample->GetBufferByIndex(0, &buffer);
+                            Report(L"IMFSample::GetBufferByIndex", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            DWORD length = 0;
+                            hr = buffer->GetCurrentLength(&length);
+                            Report(L"IMFMediaBuffer::GetCurrentLength", hr);
+                            if (FAILED(hr)) { diagnosis_hr = hr; break; }
+                            std::wcout << L"  current length=" << length << L'\n';
+                            diagnosis_hr = length == expected_size ? S_OK : E_UNEXPECTED;
+                            Report(L"NV12 frame size", diagnosis_hr);
+                            LONGLONG timestamp = 0, duration = 0;
+                            hr = sample->GetSampleTime(&timestamp);
+                            Report(L"IMFSample::GetSampleTime", hr);
+                            if (FAILED(hr)) diagnosis_hr = hr;
+                            hr = sample->GetSampleDuration(&duration);
+                            Report(L"IMFSample::GetSampleDuration", hr);
+                            if (FAILED(hr)) diagnosis_hr = hr;
+                            std::wcout << L"  timestamp=" << timestamp << L" duration=" << duration << L" (100 ns)\n";
+                            break;
+                        }
+                        if (!received && SUCCEEDED(diagnosis_hr)) {
+                            diagnosis_hr = HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+                            Report(L"wait for MEMediaSample (3 s)", diagnosis_hr);
+                        }
+                    }
+                }
             }
             PropVariantClear(&value);
         }
-        source->Stop();
+        hr = source->Stop();
+        Report(L"IMFMediaSource::Stop", hr);
+        if (FAILED(hr) && SUCCEEDED(diagnosis_hr)) diagnosis_hr = hr;
     }
-    source->Shutdown();
+    hr = source->Shutdown();
+    Report(L"IMFMediaSource::Shutdown", hr);
+    if (FAILED(hr) && SUCCEEDED(diagnosis_hr)) diagnosis_hr = hr;
     return diagnosis_hr;
 }
