@@ -165,7 +165,8 @@ The tool:
 
 1. registers the POC COM source under `HKLM\Software\Classes\CLSID`;
 2. calls `MFCreateVirtualCamera` with the requested virtual-camera access scope;
-3. starts the system-lifetime virtual camera.
+3. starts the system-lifetime virtual camera;
+4. shuts down and releases the control object, leaving the registered camera available.
 
 Do not manually edit the registry as part of the normal workflow.
 
@@ -253,9 +254,9 @@ HKLM\Software\Classes\CLSID\{CA9F0B23-C7E0-42C7-94B4-2D6A5FAD544D}\InprocServer3
 
 This is independent from the virtual camera's access scope. `MFVirtualCameraAccess_CurrentUser` means the created camera is accessible only by the current user; it does **not** mean the in-process COM source should be registered only in that user's HKCU hive. The Windows Frame Server hosts custom media sources as a service process, so the source registration must be visible machine-wide.
 
-`unregister` calls `IMFVirtualCamera::Remove` before removing the machine-wide COM entry. It also removes the legacy HKCU entry used by early POC revisions if one is present.
+`unregister` recreates the control object with the same parameters, calls `Stop` to reopen and disable the existing camera, then calls `Remove`, `Shutdown`, and releases the object before removing the machine-wide COM entry. It also removes the legacy HKCU entry used by early POC revisions if one is present. If `Stop` or `Remove` fails, the tool still calls `Shutdown` and retains the COM registration so the camera can be retried or investigated. A `Shutdown` failure after successful removal does not prevent COM cleanup.
 
-`MFVirtualCameraLifetime_System` is used so the camera is intended to persist across sessions and reboots. Reopening with identical API parameters is intended to reopen the same camera; `Remove` disables and unregisters it.
+`MFVirtualCameraLifetime_System` is used so the camera is intended to persist across sessions and reboots. Microsoft's `MFCreateVirtualCamera` documentation says that calling `Start` or `Stop` after recreating the object with identical parameters opens the existing camera. `Shutdown` releases the control object's resources and does not remove a system-lifetime camera; `Remove` disables and unregisters it.
 
 The source itself is activated by the Windows frame-server pipeline when a consumer opens the device rather than living in the registration process.
 
