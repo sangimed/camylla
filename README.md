@@ -45,12 +45,23 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 - [Windows virtual-camera POC](docs/windows-virtual-camera-poc.md): prerequisites, build, registration, smoke test, removal, troubleshooting, architecture, and M1 evidence limits.
 - [Android M2 S21 Ultra result](docs/validation/android-m2-s21-ultra.md): physical producer evidence and remaining coverage limits.
 - [M3 Android-to-Windows validation](docs/validation/android-windows-m3.md): physical 720p30 decode and recovery evidence, including the initial failed Wi-Fi attempt.
+- [M4.1 Windows preview validation](docs/validation/android-windows-m4-1.md): physical S21 Ultra preview, measured cadence/memory, recovery, lifecycle, and CLI regression results.
 
 ## Build and test
 
 For the Windows virtual-camera POC, follow the complete [Windows developer quick start](docs/windows-virtual-camera-poc.md#windows-developer-quick-start). It covers installing the prerequisites from the versioned [`.vsconfig`](.vsconfig), Visual Studio 2022 x64 configuration, build, tests, current-user registration, the first OBS smoke test, troubleshooting, and clean removal.
 
 For the Android proof, open `src/android` in Android Studio or follow the [S21 Ultra build and validation guide](docs/validation/android-m2-s21-ultra.md).
+
+For the M4.1 Windows preview shell, build the native decoder and the unpackaged WinUI app on Windows 11 x64:
+
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Debug
+dotnet build src/windows/desktop/Camylla.Desktop.csproj -p:Platform=x64
+```
+
+Run the resulting `Camylla.Desktop.exe` from `src/windows/desktop/bin/x64/Debug/net10.0-windows10.0.19041.0/win-x64`. The M3 development pin and secret appear in the setup panel; the Android proof app still starts capture explicitly.
 
 The initial dependency-free C++20 protocol library remains portable so its behavior can also be checked on non-Windows development hosts:
 

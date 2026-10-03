@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Camylla.Desktop</RootNamespace>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <ProjectReference Include="..\receiver\core\Camylla.Receiver.Core.csproj" />
+  </ItemGroup>
+  <Target Name="CopyNativeDecoder" AfterTargets="Build"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\..\..\build\src\windows\receiver\native\$(Configuration)\camylla_mf_decoder.dll')">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\..\build\src\windows\receiver\native\$(Configuration)\camylla_mf_decoder.dll"
+          DestinationFolder="$(TargetDir)" />
+  </Target>
+</Project>

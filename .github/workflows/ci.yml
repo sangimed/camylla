@@ -52,3 +52,7 @@ jobs:
         run: dotnet run --project src/windows/receiver/Camylla.Receiver.csproj -c Debug --no-build -- --self-test
       - name: Run Media Foundation decoder smoke test
         run: dotnet run --project src/windows/receiver/Camylla.Receiver.csproj -c Debug --no-build -- --decoder-smoke
+      - name: Run pooled 720p30 frame memory smoke test
+        run: dotnet run --project src/windows/receiver/Camylla.Receiver.csproj -c Debug --no-build -- --frame-memory-smoke
+      - name: Build WinUI desktop preview
+        run: dotnet build src/windows/desktop/Camylla.Desktop.csproj -c Debug -p:Platform=x64

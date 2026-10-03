@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Text.Json;
 using System.Security.Authentication;
@@ -52,14 +53,18 @@ internal static class Wire
         if (flags is not (Config or Key or Normal) || BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(34)) != 1 ||
             BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(60)) != 0)
             throw new InvalidDataException("Invalid video flags/type/reserved field");
-        var payload = new byte[length];
-        await stream.ReadExactlyAsync(payload, ct);
-        return new VideoUnit(
-            BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(12)),
-            BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(20)),
-            BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(24)), flags,
-            Convert.ToHexString(header.AsSpan(36, 16)),
-            BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(52)), payload);
+        var payload = ArrayPool<byte>.Shared.Rent(checked((int)length));
+        try
+        {
+            await stream.ReadExactlyAsync(payload.AsMemory(0, checked((int)length)), ct);
+            return new VideoUnit(
+                BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(12)),
+                BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(20)),
+                BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(24)), flags,
+                Convert.ToHexString(header.AsSpan(36, 16)),
+                BinaryPrimitives.ReadUInt64BigEndian(header.AsSpan(52)), payload, checked((int)length));
+        }
+        catch { ArrayPool<byte>.Shared.Return(payload); throw; }
     }
 
     public static string RequiredString(JsonElement element, string name) =>
@@ -86,4 +91,11 @@ internal static class Wire
 }
 
 internal sealed record VideoUnit(ulong Sequence, uint Generation, ulong PtsUs, ushort Flags,
-    string SessionId, ulong AndroidSendUs, byte[] Payload);
+    string SessionId, ulong AndroidSendUs, byte[] Payload, int PayloadLength) : IDisposable
+{
+    private int disposed;
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) == 0) ArrayPool<byte>.Shared.Return(Payload);
+    }
+}
