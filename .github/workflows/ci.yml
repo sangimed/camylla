@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android build and JVM tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check patch whitespace
+        run: git diff --check HEAD^ HEAD
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK platform
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build app and run JVM tests
+        working-directory: src/android
+        run: bash ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
+
+  windows:
+    name: Windows native and receiver checks
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native projects
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build native projects
+        run: cmake --build build --config Debug --parallel
+      - name: Run native tests
+        run: ctest --test-dir build -C Debug --output-on-failure
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build receiver
+        run: dotnet build src/windows/receiver/Camylla.Receiver.csproj -c Debug
+      - name: Run receiver wire self-test
+        run: dotnet run --project src/windows/receiver/Camylla.Receiver.csproj -c Debug --no-build -- --self-test
+      - name: Run Media Foundation decoder smoke test
+        run: dotnet run --project src/windows/receiver/Camylla.Receiver.csproj -c Debug --no-build -- --decoder-smoke
