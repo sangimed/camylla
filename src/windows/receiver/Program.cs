@@ -11,8 +11,9 @@ namespace Camylla.Receiver;
 
 internal static class Program
 {
-    private const int ControlPort = 58413;
-    private const int VideoPort = 58414;
+    private static int ControlPort = 58413;
+    private static int VideoPort = 58414;
+    private static readonly TimeSpan ControlIdleTimeout = TimeSpan.FromSeconds(8);
     private static Session? active;
     private static readonly object Gate = new();
     private static long received, keyframes, decoded, decoderErrors, networkErrors, decoderResets, reconnects;
@@ -33,11 +34,19 @@ internal static class Program
             SelfTest.DecodeAnnexBFile(args[1]);
             return;
         }
-        if (args.Length == 2 && args[0] == "--loopback-test") {
-            await LoopbackSelfTest.RunAsync(args[1]);
+        if (args.Length is 2 or 4 && args[0] == "--loopback-test") {
+            var controlPort = args.Length == 4 ? int.Parse(args[2]) : ControlPort;
+            var videoPort = args.Length == 4 ? int.Parse(args[3]) : VideoPort;
+            await LoopbackSelfTest.RunAsync(args[1], controlPort, videoPort);
             return;
         }
-        if (args.Length != 0) throw new ArgumentException("Usage: Camylla.Receiver [--self-test|--decoder-smoke|--decoder-file path|--loopback-test path]");
+        if (args.Length == 3 && args[0] == "--ports") {
+            ControlPort = int.Parse(args[1]);
+            VideoPort = int.Parse(args[2]);
+            if (ControlPort is < 1 or > 65535 || VideoPort is < 1 or > 65535 || ControlPort == VideoPort)
+                throw new ArgumentException("Invalid listener ports");
+        }
+        else if (args.Length != 0) throw new ArgumentException("Usage: Camylla.Receiver [--self-test|--decoder-smoke|--decoder-file path|--loopback-test path [controlPort videoPort]|--ports controlPort videoPort]");
         var certificate = DevelopmentIdentity.LoadOrCreate();
         var token = DevelopmentIdentity.LoadOrCreateSecret();
         Console.WriteLine($"Development certificate SHA-256 pin: {Convert.ToHexString(SHA256.HashData(certificate.RawData))}");
@@ -109,13 +118,21 @@ internal static class Program
                     codec = "h264", mode, fps = 30 }, ct);
                 while (!ct.IsCancellationRequested)
                 {
-                    using var message = await Wire.ReadControlAsync(tls, ct);
+                    using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    idle.CancelAfter(ControlIdleTimeout);
+                    using var message = await Wire.ReadControlAsync(tls, idle.Token);
                     var kind = Wire.RequiredString(message.RootElement, "type");
                     if (kind == "stop") break;
                     if (kind != "ping") throw new InvalidDataException("Invalid control message type");
                     await session.SendAsync(new { type = "pong" }, ct);
                 }
             }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                Console.Error.WriteLine("Control heartbeat timed out; retiring stale session");
+                Interlocked.Increment(ref networkErrors);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
             catch (Exception error) when (error is IOException or AuthenticationException or InvalidDataException or InvalidOperationException or SocketException)
             {
                 Console.Error.WriteLine($"Control: {error.Message}");
