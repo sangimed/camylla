@@ -117,12 +117,24 @@ public sealed class OwnedNv12Frame : IDisposable
         var h = checked((int)height);
         var s = checked((int)stride);
         var bytes = RequiredLength(w, h, s);
-        if (source == IntPtr.Zero || bytes != length)
+        // Media Foundation may align the stored luma height (1080 -> 1088).
+        // NV12 chroma begins after those padded luma rows, not after the visible height.
+        var rowBytes = (long)s;
+        var storedHeightNumerator = (long)length * 2;
+        var storedHeightDenominator = rowBytes * 3;
+        if (source == IntPtr.Zero || storedHeightNumerator % storedHeightDenominator != 0)
             throw new ArgumentException("Invalid borrowed NV12 frame");
+        var storedHeight = storedHeightNumerator / storedHeightDenominator;
+        if (storedHeight < h || storedHeight > h + 128 || (storedHeight & 1) != 0)
+            throw new ArgumentException("Invalid borrowed NV12 frame storage height");
         var array = ArrayPool<byte>.Shared.Rent(bytes);
         try
         {
-            Marshal.Copy(source, array, 0, bytes);
+            var lumaBytes = checked(s * h);
+            var chromaBytes = bytes - lumaBytes;
+            Marshal.Copy(source, array, 0, lumaBytes);
+            Marshal.Copy(IntPtr.Add(source, checked((int)(rowBytes * storedHeight))),
+                array, lumaBytes, chromaBytes);
             return new OwnedNv12Frame(new BufferOwner(array, bytes), w, h, s,
                 pts100ns, decodedAtTicks);
         }
