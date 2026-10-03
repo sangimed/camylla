@@ -32,6 +32,7 @@ class NetworkSender(
                                    val queuedNs: Long, val generation: Int)
     private val lock = Object()
     private val retryWaiter = RetryWaiter()
+    @Volatile private var activeHeartbeat: ControlHeartbeat? = null
     private val queue = RecoveryQueue<PendingUnit>({ it.payload.size }, { it.flag == M3Wire.CONFIG })
     private val pin = parsePin(pinHex)
     private val tls = SSLContext.getInstance("TLS").apply {
@@ -104,6 +105,8 @@ class NetworkSender(
     private fun run() {
         val recovery = RecoveryState()
         while (!stopping) {
+            var heartbeatThread: Thread? = null
+            var sessionHeartbeat: ControlHeartbeat? = null
             try {
                 recovery.attempting()
                 progress = progress.copy(state = if (recovery.connectionAttempts == 1L) "Connecting" else "Recovering",
@@ -124,8 +127,17 @@ class NetworkSender(
                 val id = M3Wire.hex16(welcome.getString("session"))
                 progress = progress.copy(state = "Negotiating")
                 val lastPong = java.util.concurrent.atomic.AtomicLong(SystemClock.elapsedRealtime())
-                Thread({ readControl(control, lastPong) }, "camylla-control-reader").apply { isDaemon = true; start() }
-                Thread({ heartbeat(control, lastPong) }, "camylla-control-heartbeat").apply { isDaemon = true; start() }
+                val heartbeat = ControlHeartbeat(
+                    HEARTBEAT_MS, HEARTBEAT_TIMEOUT_MS, SystemClock::elapsedRealtime,
+                    { !stopping && !control.isClosed && controlSocket === control },
+                    lastPong::get,
+                    { M3Wire.writeControl(control.outputStream, "{\"type\":\"ping\"}") },
+                )
+                sessionHeartbeat = heartbeat
+                activeHeartbeat = heartbeat
+                Thread({ readControl(control, lastPong, heartbeat) }, "camylla-control-reader").apply { isDaemon = true; start() }
+                heartbeatThread = Thread({ heartbeat(control, heartbeat) }, "camylla-control-heartbeat")
+                    .apply { isDaemon = true; start() }
                 if (control.isClosed) throw java.io.IOException("Control session closed")
                 val video = connect(VIDEO_PORT)
                 videoSocket = video
@@ -163,8 +175,11 @@ class NetworkSender(
                 if (!stopping) reportError("Transport: ${error.message}")
             } finally {
                 // A channel failure invalidates the entire logical session.
+                sessionHeartbeat?.cancel()
+                if (activeHeartbeat === sessionHeartbeat) activeHeartbeat = null
                 runCatching { videoSocket?.close() }; videoSocket = null
                 runCatching { controlSocket?.close() }; controlSocket = null
+                heartbeatThread?.join(500)
                 synchronized(lock) { resetLocked(closeVideo = false, requestKeyFrame = false) }
             }
             if (!stopping) {
@@ -176,15 +191,9 @@ class NetworkSender(
         progress = progress.copy(state = "Stopping")
     }
 
-    private fun heartbeat(control: SSLSocket, lastPong: java.util.concurrent.atomic.AtomicLong) {
+    private fun heartbeat(control: SSLSocket, schedule: ControlHeartbeat) {
         try {
-            while (!stopping && !control.isClosed && controlSocket === control) {
-                synchronized(lock) { if (!stopping && !control.isClosed) lock.wait(HEARTBEAT_MS) }
-                if (stopping || control.isClosed || controlSocket !== control) break
-                if (SystemClock.elapsedRealtime() - lastPong.get() > HEARTBEAT_TIMEOUT_MS)
-                    throw java.io.IOException("Control heartbeat timed out")
-                M3Wire.writeControl(control.outputStream, "{\"type\":\"ping\"}")
-            }
+            schedule.run()
         } catch (error: Exception) {
             if (!stopping && controlSocket === control) reportError("Control heartbeat: ${error.message}")
             runCatching { control.close() }
@@ -192,7 +201,8 @@ class NetworkSender(
         }
     }
 
-    private fun readControl(control: SSLSocket, lastPong: java.util.concurrent.atomic.AtomicLong) {
+    private fun readControl(control: SSLSocket, lastPong: java.util.concurrent.atomic.AtomicLong,
+                            heartbeat: ControlHeartbeat) {
         try {
             while (!stopping && !control.isClosed) {
                 val message = JSONObject(M3Wire.readControl(control.inputStream))
@@ -207,6 +217,8 @@ class NetworkSender(
             if (!stopping) reportError("Control read: ${error.message}")
             runCatching { control.close() }
             if (controlSocket === control) runCatching { videoSocket?.close() }
+        } finally {
+            heartbeat.cancel()
         }
     }
 
@@ -234,6 +246,7 @@ class NetworkSender(
     override fun close() {
         stopping = true
         retryWaiter.cancel()
+        activeHeartbeat?.cancel()
         synchronized(lock) { queue.clear(); lock.notifyAll() }
         runCatching { connectingSocket?.close() }
         runCatching { videoSocket?.close() }
