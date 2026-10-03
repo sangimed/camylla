@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Camylla.Receiver;
 
 if (args.Length == 1 && args[0] == "--self-test") { await SelfTest.RunAsync(); return; }
+if (args.Length == 1 && args[0] == "--frame-memory-smoke") { SelfTest.FrameMemorySmoke(); return; }
 if (args.Length == 1 && args[0] == "--decoder-smoke") {
     using var decoder = new MfDecoder("1280x720@30");
     decoder.Reset();
@@ -15,7 +16,7 @@ if (args.Length is 2 or 4 && args[0] == "--loopback-test") {
     return;
 }
 if (args.Length != 0 && (args.Length != 3 || args[0] != "--ports"))
-    throw new ArgumentException("Usage: Camylla.Receiver [--self-test|--decoder-smoke|--decoder-file path|--loopback-test path [controlPort videoPort]|--ports controlPort videoPort]");
+    throw new ArgumentException("Usage: Camylla.Receiver [--self-test|--frame-memory-smoke|--decoder-smoke|--decoder-file path|--loopback-test path [controlPort videoPort]|--ports controlPort videoPort]");
 using var host = args.Length == 3
     ? new ReceiverHost(int.Parse(args[1]), int.Parse(args[2])) : new ReceiverHost();
 using var stop = new CancellationTokenSource();

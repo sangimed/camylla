@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -42,6 +43,12 @@ public sealed class ReceiverHost : IDisposable
         frames.Publish(frame);
         lock (readerGate)
             foreach (var reader in readers) reader.Publish(frame);
+    }
+    private void PublishSessionFrame(Session session, OwnedNv12Frame frame)
+    {
+        lock (Gate)
+            if (active == session && session.State == ReceiverState.Streaming)
+                PublishFrame(frame);
     }
     private void ClearFrames()
     {
@@ -266,7 +273,7 @@ public sealed class ReceiverHost : IDisposable
                 await Wire.WriteControlAsync(tls, new { type = "ready", session = id }, ct);
                 Interlocked.Increment(ref reconnects);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, session.Token);
-                using var decoder = new MfDecoder(session.Mode, PublishFrame);
+                using var decoder = new MfDecoder(session.Mode, frame => PublishSessionFrame(session, frame));
                 long rejectedFrames = 0;
                 byte[]? config = null;
                 uint generation = 0;
@@ -278,7 +285,7 @@ public sealed class ReceiverHost : IDisposable
                 {
                     using var messageTimeout = CancellationTokenSource.CreateLinkedTokenSource(linked.Token);
                     messageTimeout.CancelAfter(TimeSpan.FromSeconds(2));
-                    var unit = await Wire.ReadVideoAsync(tls, messageTimeout.Token);
+                    using var unit = await Wire.ReadVideoAsync(tls, messageTimeout.Token);
                     Wire.RequireBoundSession(unit.SessionId, session.Id);
                     Interlocked.Increment(ref received);
                     lastSequence = unit.Sequence;
@@ -294,7 +301,7 @@ public sealed class ReceiverHost : IDisposable
                     previous = unit.Sequence;
                     if (unit.Flags == Wire.Config)
                     {
-                        config = unit.Payload;
+                        config = unit.Payload.AsSpan(0, unit.PayloadLength).ToArray();
                         generation = unit.Generation;
                         continue;
                     }
@@ -309,15 +316,20 @@ public sealed class ReceiverHost : IDisposable
                     if (needsKey)
                     {
                         if (unit.Flags != Wire.Key || config == null) continue;
-                        var joined = new byte[config.Length + unit.Payload.Length];
-                        config.CopyTo(joined, 0);
-                        unit.Payload.CopyTo(joined, config.Length);
-                        decodedNow = decoder.Push(joined, unit.PtsUs);
+                        var length = checked(config.Length + unit.PayloadLength);
+                        var joined = ArrayPool<byte>.Shared.Rent(length);
+                        try
+                        {
+                            config.CopyTo(joined, 0);
+                            unit.Payload.AsSpan(0, unit.PayloadLength).CopyTo(joined.AsSpan(config.Length));
+                            decodedNow = decoder.Push(joined, unit.PtsUs, length);
+                        }
+                        finally { ArrayPool<byte>.Shared.Return(joined); }
                         needsKey = false;
                     }
                     else
                     {
-                        decodedNow = decoder.Push(unit.Payload, unit.PtsUs);
+                        decodedNow = decoder.Push(unit.Payload, unit.PtsUs, unit.PayloadLength);
                     }
                     if (unit.Flags == Wire.Key && needsKey == false) Interlocked.Increment(ref keyframes);
                     var rejectedNow = decoder.RejectedFrames;

@@ -1,9 +1,9 @@
+using System.Buffers;
 using System.Diagnostics;
+using System.Runtime.InteropServices.WindowsRuntime;
 using Camylla.Receiver;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Windows.Graphics.Imaging;
-using Windows.Storage.Streams;
 
 namespace Camylla.Desktop;
 
@@ -12,7 +12,7 @@ public sealed partial class MainWindow : Window
     private readonly ReceiverHost receiver = new();
     private readonly CancellationTokenSource stop = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(33) };
-    private readonly SoftwareBitmapSource imageSource = new();
+    private WriteableBitmap? imageSource;
     private Task? receiverTask;
     private bool rendering;
     private bool closing;
@@ -20,14 +20,30 @@ public sealed partial class MainWindow : Window
     private long displayed;
     private string lastSessionId = "none";
     private string? lastError;
+    private StreamWriter? diagnosticsLog;
+    private long lastLogTicks;
 
     public MainWindow()
     {
         InitializeComponent();
-        PreviewImage.Source = imageSource;
         timer.Tick += OnTick;
         Closed += OnClosed;
-        receiver.Log += message => Debug.WriteLine(message);
+        receiver.Log += message =>
+        {
+            if (!message.StartsWith("Development session secret:", StringComparison.Ordinal))
+                Debug.WriteLine(message);
+        };
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.LocalApplicationData), "Camylla");
+            Directory.CreateDirectory(directory);
+            diagnosticsLog = new StreamWriter(Path.Combine(directory, "m4-1-preview-diagnostics.csv"), false)
+                { AutoFlush = true };
+            diagnosticsLog.WriteLine("utc,state,receivedAU,decoded,displayed,superseded,queueDepth,queueHighWater,decoderErrors,networkErrors,width,height,stride,nv12ActiveBuffers,nv12BufferHighWater");
+        }
+        catch (IOException error) { Debug.WriteLine(error); }
+        catch (UnauthorizedAccessException error) { Debug.WriteLine(error); }
         receiverTask = Task.Run(() => receiver.RunAsync(stop.Token));
         timer.Start();
     }
@@ -46,17 +62,45 @@ public sealed partial class MainWindow : Window
                 lastSessionId = snapshot.SessionId;
                 lastPreviewTicks = 0;
             }
-            var frame = receiver.Frames.TakeLatest();
+            using var frame = receiver.Frames.TakeLatest();
             if (frame != null && snapshot.State == "Streaming")
             {
-                // Convert a detached owned frame, never the borrowed decoder callback memory.
-                var bgra = await Task.Run(() => ConvertNv12ToBgra(frame));
-                if (closing) return;
-                using var writer = new DataWriter();
-                writer.WriteBytes(bgra);
-                using var bitmap = SoftwareBitmap.CreateCopyFromBuffer(writer.DetachBuffer(),
-                    BitmapPixelFormat.Bgra8, frame.Width, frame.Height, BitmapAlphaMode.Ignore);
-                await imageSource.SetBitmapAsync(bitmap);
+                var bytes = Nv12BgraConverter.RequiredBytes(frame);
+                // One BGRA conversion at a time; the buffer returns to the pool after UI copy.
+                var bgra = await Task.Run(() =>
+                {
+                    var rented = ArrayPool<byte>.Shared.Rent(bytes);
+                    try { Nv12BgraConverter.Convert(frame, rented.AsSpan(0, bytes)); return rented; }
+                    catch { ArrayPool<byte>.Shared.Return(rented); throw; }
+                });
+                try
+                {
+                    if (closing) return;
+                    var current = receiver.Snapshot();
+                    if (current.State != "Streaming" || current.SessionId != snapshot.SessionId)
+                    {
+                        ClearPreview();
+                        return;
+                    }
+                    // A slow conversion must not make an old frame look newly live.
+                    if (Stopwatch.GetElapsedTime(frame.DecodedAtTicks) >= TimeSpan.FromSeconds(2))
+                    {
+                        ClearPreview();
+                        return;
+                    }
+                    snapshot = current;
+                    if (imageSource == null || imageSource.PixelWidth != frame.Width ||
+                        imageSource.PixelHeight != frame.Height)
+                    {
+                        imageSource = new WriteableBitmap(frame.Width, frame.Height);
+                        PreviewImage.Source = imageSource;
+                    }
+                    using var pixels = imageSource.PixelBuffer.AsStream();
+                    pixels.Position = 0;
+                    pixels.Write(bgra, 0, bytes);
+                    imageSource.Invalidate();
+                }
+                finally { ArrayPool<byte>.Shared.Return(bgra); }
                 lastPreviewTicks = Stopwatch.GetTimestamp();
                 displayed++;
             }
@@ -64,7 +108,7 @@ public sealed partial class MainWindow : Window
                 Stopwatch.GetElapsedTime(lastPreviewTicks) < TimeSpan.FromSeconds(2) &&
                 snapshot.State == "Streaming";
             WaitingText.Visibility = fresh ? Visibility.Collapsed : Visibility.Visible;
-            if (!fresh) await imageSource.SetBitmapAsync(null);
+            if (!fresh) ClearPreview();
             StateText.Text = lastError != null ? $"Receiver error: {lastError}" :
                 fresh ? $"Streaming · {snapshot.Width} × {snapshot.Height}" :
                 $"Waiting for phone · {snapshot.State}";
@@ -75,7 +119,10 @@ public sealed partial class MainWindow : Window
                 $"· superseded {snapshot.SupersededPreviewFrames} · queue {snapshot.FrameQueueDepth}/1 " +
                 $"· high-water {snapshot.FrameQueueHighWater} · decoder errors {snapshot.DecoderErrors} " +
                 $"· network errors {snapshot.NetworkErrors} · resets {snapshot.DecoderResets} " +
+                $"· NV12 {snapshot.Width}×{snapshot.Height}/stride {snapshot.Stride} " +
+                $"· active buffers {OwnedNv12Frame.ActiveBufferCount}/high-water {OwnedNv12Frame.BufferHighWater} " +
                 $"· last sequence {snapshot.LastSequence} · PTS {snapshot.LastPtsUs} µs";
+            WriteDiagnostics(snapshot);
         }
         catch (Exception error)
         {
@@ -96,30 +143,28 @@ public sealed partial class MainWindow : Window
             catch (Exception error) { Debug.WriteLine(error); }
         receiver.Dispose();
         stop.Dispose();
-        imageSource.Dispose();
+        diagnosticsLog?.Dispose();
+        ClearPreview();
     }
 
-    private static byte[] ConvertNv12ToBgra(OwnedNv12Frame frame)
+    private void WriteDiagnostics(ReceiverSnapshot snapshot)
     {
-        var result = new byte[checked(frame.Width * frame.Height * 4)];
-        var source = frame.Pixels;
-        var uvBase = frame.Stride * frame.Height;
-        for (var y = 0; y < frame.Height; y++)
-        for (var x = 0; x < frame.Width; x++)
+        if (diagnosticsLog == null || (lastLogTicks != 0 &&
+            Stopwatch.GetElapsedTime(lastLogTicks) < TimeSpan.FromSeconds(5))) return;
+        lastLogTicks = Stopwatch.GetTimestamp();
+        try
         {
-            var luma = source[y * frame.Stride + x] - 16;
-            var chroma = uvBase + (y / 2) * frame.Stride + (x & ~1);
-            var u = source[chroma] - 128;
-            var v = source[chroma + 1] - 128;
-            var c = Math.Max(0, luma) * 298;
-            var offset = (y * frame.Width + x) * 4;
-            result[offset] = Clamp((c + 516 * u + 128) >> 8);
-            result[offset + 1] = Clamp((c - 100 * u - 208 * v + 128) >> 8);
-            result[offset + 2] = Clamp((c + 409 * v + 128) >> 8);
-            result[offset + 3] = 255;
+            if (diagnosticsLog.BaseStream.Length >= 1_000_000) return;
+            diagnosticsLog.WriteLine(FormattableString.Invariant($"{DateTime.UtcNow:O},{snapshot.State},{snapshot.ReceivedAccessUnits},{snapshot.DecodedFrames},{displayed},{snapshot.SupersededPreviewFrames},{snapshot.FrameQueueDepth},{snapshot.FrameQueueHighWater},{snapshot.DecoderErrors},{snapshot.NetworkErrors},{snapshot.Width},{snapshot.Height},{snapshot.Stride},{OwnedNv12Frame.ActiveBufferCount},{OwnedNv12Frame.BufferHighWater}"));
         }
-        return result;
+        catch (IOException error) { Debug.WriteLine(error); diagnosticsLog.Dispose(); diagnosticsLog = null; }
     }
 
-    private static byte Clamp(int value) => (byte)Math.Clamp(value, 0, 255);
+    private void ClearPreview()
+    {
+        PreviewImage.Source = null;
+        imageSource = null;
+        WaitingText.Visibility = Visibility.Visible;
+        lastPreviewTicks = 0;
+    }
 }

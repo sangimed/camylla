@@ -1,12 +1,64 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 namespace Camylla.Receiver;
 
-/// <summary>One immutable, owned NV12 image. PTS is in 100 ns units from the phone's media clock.</summary>
-public sealed class OwnedNv12Frame
+/// <summary>
+/// A read-only lease on owned NV12 bytes. Dispose after use; Retain creates a separate lease.
+/// PTS is in 100 ns units from the phone's media clock.
+/// </summary>
+public sealed class OwnedNv12Frame : IDisposable
 {
-    private readonly byte[] pixels;
-    public ReadOnlySpan<byte> Pixels => pixels;
+    private static long activeBuffers, highWaterBuffers, pooledRentals, pooledReturns;
+    public static long ActiveBufferCount => Interlocked.Read(ref activeBuffers);
+    public static long BufferHighWater => Interlocked.Read(ref highWaterBuffers);
+    public static long PooledRentals => Interlocked.Read(ref pooledRentals);
+    public static long PooledReturns => Interlocked.Read(ref pooledReturns);
+
+    private sealed class BufferOwner
+    {
+        private int references = 1;
+        internal readonly byte[] Array;
+        internal readonly int Length;
+        internal BufferOwner(byte[] array, int length)
+        {
+            Array = array; Length = length;
+            Interlocked.Increment(ref pooledRentals);
+            var now = Interlocked.Increment(ref activeBuffers);
+            long prior;
+            while (now > (prior = Interlocked.Read(ref highWaterBuffers)) &&
+                   Interlocked.CompareExchange(ref highWaterBuffers, now, prior) != prior) { }
+        }
+        internal void Retain()
+        {
+            while (true)
+            {
+                var count = Volatile.Read(ref references);
+                if (count == 0) throw new ObjectDisposedException(nameof(OwnedNv12Frame));
+                if (Interlocked.CompareExchange(ref references, count + 1, count) == count) return;
+            }
+        }
+        internal void Release()
+        {
+            if (Interlocked.Decrement(ref references) == 0)
+            {
+                ArrayPool<byte>.Shared.Return(Array);
+                Interlocked.Increment(ref pooledReturns);
+                Interlocked.Decrement(ref activeBuffers);
+            }
+        }
+    }
+
+    private readonly BufferOwner owner;
+    private int disposed;
+    public ReadOnlySpan<byte> Pixels
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+            return owner.Array.AsSpan(0, owner.Length);
+        }
+    }
     public int Width { get; }
     public int Height { get; }
     public int Stride { get; }
@@ -14,12 +66,9 @@ public sealed class OwnedNv12Frame
     public long DecodedAtTicks { get; }
     public string PixelFormat => "NV12";
 
-    private OwnedNv12Frame(byte[] pixels, int width, int height, int stride, long pts100ns, long decodedAtTicks)
+    private OwnedNv12Frame(BufferOwner owner, int width, int height, int stride, long pts100ns, long decodedAtTicks)
     {
-        if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0 ||
-            stride < width || (stride & 1) != 0 || pixels.Length != checked(stride * height * 3 / 2))
-            throw new ArgumentException("Invalid contiguous NV12 dimensions or length");
-        this.pixels = pixels;
+        this.owner = owner;
         Width = width;
         Height = height;
         Stride = stride;
@@ -27,20 +76,67 @@ public sealed class OwnedNv12Frame
         DecodedAtTicks = decodedAtTicks;
     }
 
+    private static int RequiredLength(int width, int height, int stride)
+    {
+        if (width <= 0 || width > 4096 || height <= 0 || height > 2160 ||
+            (width & 1) != 0 || (height & 1) != 0 || stride < width ||
+            stride > 8192 || (stride & 1) != 0)
+            throw new ArgumentException("Invalid NV12 dimensions or stride");
+        var length = checked(stride * height * 3 / 2);
+        if (length > 64 * 1024 * 1024) throw new ArgumentException("NV12 frame too large");
+        return length;
+    }
+
     public static OwnedNv12Frame CopyFromManaged(ReadOnlySpan<byte> source, int width, int height,
-        int stride, long pts100ns, long decodedAtTicks) =>
-        new(source.ToArray(), width, height, stride, pts100ns, decodedAtTicks);
+        int stride, long pts100ns, long decodedAtTicks)
+    {
+        var bytes = RequiredLength(width, height, stride);
+        if (source.Length != bytes) throw new ArgumentException("Invalid NV12 byte length", nameof(source));
+        var array = ArrayPool<byte>.Shared.Rent(bytes);
+        try
+        {
+            source.CopyTo(array);
+            return new OwnedNv12Frame(new BufferOwner(array, bytes), width, height, stride,
+                pts100ns, decodedAtTicks);
+        }
+        catch { ArrayPool<byte>.Shared.Return(array); throw; }
+    }
 
     public static OwnedNv12Frame CopyFromBorrowed(IntPtr source, uint length, uint width, uint height,
         uint stride, long pts100ns, long decodedAtTicks)
     {
-        var bytes = checked((int)(checked((ulong)stride * height * 3UL) / 2UL));
-        if (source == IntPtr.Zero || bytes <= 0 || bytes != length || width > 4096 || height > 2160)
+        var w = checked((int)width);
+        var h = checked((int)height);
+        var s = checked((int)stride);
+        var bytes = RequiredLength(w, h, s);
+        if (source == IntPtr.Zero || bytes != length)
             throw new ArgumentException("Invalid borrowed NV12 frame");
-        var owned = new byte[bytes];
-        Marshal.Copy(source, owned, 0, bytes);
-        return new OwnedNv12Frame(owned, checked((int)width), checked((int)height),
-            checked((int)stride), pts100ns, decodedAtTicks);
+        var array = ArrayPool<byte>.Shared.Rent(bytes);
+        try
+        {
+            Marshal.Copy(source, array, 0, bytes);
+            return new OwnedNv12Frame(new BufferOwner(array, bytes), w, h, s,
+                pts100ns, decodedAtTicks);
+        }
+        catch { ArrayPool<byte>.Shared.Return(array); throw; }
+    }
+
+    public OwnedNv12Frame Retain()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+        owner.Retain();
+        if (Volatile.Read(ref disposed) != 0)
+        {
+            owner.Release();
+            throw new ObjectDisposedException(nameof(OwnedNv12Frame));
+        }
+        try { return new OwnedNv12Frame(owner, Width, Height, Stride, Pts100ns, DecodedAtTicks); }
+        catch { owner.Release(); throw; }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) == 0) owner.Release();
     }
 }
 
@@ -58,13 +154,17 @@ public sealed class LatestFrameStore
 
     public void Publish(OwnedNv12Frame frame)
     {
-        if (Interlocked.Exchange(ref latest, frame) is not null)
+        var previous = Interlocked.Exchange(ref latest, frame.Retain());
+        if (previous is not null)
+        {
             Interlocked.Increment(ref superseded);
+            previous.Dispose();
+        }
         Interlocked.Increment(ref published);
     }
 
     public OwnedNv12Frame? TakeLatest() => Interlocked.Exchange(ref latest, null);
-    public void Clear() => Interlocked.Exchange(ref latest, null);
+    public void Clear() => Interlocked.Exchange(ref latest, null)?.Dispose();
 }
 
 public sealed class FrameReader : IDisposable

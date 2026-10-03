@@ -41,8 +41,9 @@ public sealed class MfDecoder : IDisposable
         {
             try
             {
-                frameSink(OwnedNv12Frame.CopyFromBorrowed(data, length, width, height, stride,
-                    timestamp100ns, LastDecodedTicks));
+                using var frame = OwnedNv12Frame.CopyFromBorrowed(data, length, width, height, stride,
+                    timestamp100ns, LastDecodedTicks);
+                frameSink(frame);
             }
             catch (Exception)
             {
@@ -54,9 +55,11 @@ public sealed class MfDecoder : IDisposable
     private long rejectedFrames;
     public long RejectedFrames => Interlocked.Read(ref rejectedFrames);
 
-    public int Push(byte[] bytes, ulong ptsUs)
+    public int Push(byte[] bytes, ulong ptsUs, int? payloadLength = null)
     {
-        Marshal.ThrowExceptionForHR(NativePush(handle, bytes, (uint)bytes.Length, ptsUs, out var count));
+        var length = payloadLength ?? bytes.Length;
+        if (length <= 0 || length > bytes.Length) throw new ArgumentOutOfRangeException(nameof(payloadLength));
+        Marshal.ThrowExceptionForHR(NativePush(handle, bytes, checked((uint)length), ptsUs, out var count));
         return checked((int)count);
     }
 
