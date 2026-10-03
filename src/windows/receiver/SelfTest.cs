@@ -11,6 +11,23 @@ namespace Camylla.Receiver;
 
 internal static class SelfTest
 {
+    public static async Task IpcHostSmokeAsync()
+    {
+        using var host = new ReceiverHost();
+        await using var publisher = new CameraPipePublisher(host, () => (true, "local-native-smoke"));
+        publisher.Start();
+        var pixels = new byte[1280 * 720 * 3 / 2];
+        pixels[0] = 37;
+        Console.WriteLine("Local IPC test producer ready");
+        for (var i = 0; i < 100; i++)
+        {
+            using var frame = OwnedNv12Frame.CopyFromManaged(pixels, 1280, 720, 1280,
+                i * 333_333L, Stopwatch.GetTimestamp());
+            host.PublishFrame(frame);
+            await Task.Delay(100);
+        }
+    }
+
     public static void DecodeAnnexBFile(string path)
     {
         var units = ReadAccessUnits(path);
@@ -139,6 +156,25 @@ internal static class SelfTest
         var received = new byte[pixels.Length];
         await client.ReadExactlyAsync(received, timeout.Token);
         Check(received.AsSpan().SequenceEqual(pixels), "camera pipe preserves NV12 bytes");
+        await Task.Delay(550, timeout.Token);
+        await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await client.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 0, "expired live frame is neutral");
+        var padded1080 = new byte[2048 * 1080 * 3 / 2];
+        padded1080[0] = 37;
+        padded1080[^1] = 91;
+        using (var frame = OwnedNv12Frame.CopyFromManaged(padded1080, 1920, 1080, 2048, 456,
+                   Stopwatch.GetTimestamp())) host.PublishFrame(frame);
+        await Task.Delay(50, timeout.Token);
+        await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await client.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 1 && BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(8)) == 1920 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(16)) == 2048 &&
+            BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(20)) == padded1080.Length,
+            "camera pipe publishes padded 1080p NV12");
+        var received1080 = new byte[padded1080.Length];
+        await client.ReadExactlyAsync(received1080, timeout.Token);
+        Check(received1080.AsSpan().SequenceEqual(padded1080), "camera pipe preserves padded 1080p bytes");
         Volatile.Write(ref streaming, 0);
         await Task.Delay(50, timeout.Token);
         await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);

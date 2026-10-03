@@ -152,6 +152,10 @@ public sealed class CameraPipePublisher : IAsyncDisposable
                     using (frame)
                     {
                         var live = frame != null && state().Streaming &&
+                            ((frame.Width == 1280 && frame.Height == 720) ||
+                             (frame.Width == 1920 && frame.Height == 1080)) &&
+                            frame.Stride >= frame.Width && frame.Stride <= 4096 &&
+                            frame.Pixels.Length <= 4096 * 1080 * 3 / 2 &&
                             Stopwatch.GetElapsedTime(frame.DecodedAtTicks) < TimeSpan.FromMilliseconds(500);
                         WriteHeader(header, live ? frame : null, streamGeneration, frameSequence);
                         await pipe.WriteAsync(header, stop.Token);

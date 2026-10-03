@@ -52,6 +52,28 @@ void ReportSourceToken() {
             LocalFree(sid);
         }
     }
+    DWORD sid_bytes = 0;
+    DWORD domain_bytes = 0;
+    SID_NAME_USE use{};
+    LookupAccountNameW(nullptr, L"NT SERVICE\\FrameServer", nullptr, &sid_bytes,
+                       nullptr, &domain_bytes, &use);
+    std::vector<std::uint8_t> service_sid(sid_bytes);
+    std::vector<wchar_t> domain(domain_bytes);
+    if (sid_bytes != 0 && LookupAccountNameW(nullptr, L"NT SERVICE\\FrameServer",
+        service_sid.data(), &sid_bytes, domain.data(), &domain_bytes, &use)) {
+        DWORD groups_bytes = 0;
+        GetTokenInformation(token, TokenGroups, nullptr, 0, &groups_bytes);
+        std::vector<std::uint8_t> groups_data(groups_bytes);
+        bool present = false;
+        if (groups_bytes != 0 &&
+            GetTokenInformation(token, TokenGroups, groups_data.data(), groups_bytes, &groups_bytes)) {
+            const auto* groups = reinterpret_cast<const TOKEN_GROUPS*>(groups_data.data());
+            for (DWORD index = 0; index < groups->GroupCount; ++index)
+                if (EqualSid(groups->Groups[index].Sid, service_sid.data())) present = true;
+        }
+        OutputDebugStringW(present ? L"Camylla camera: FrameServer service SID present\n"
+                                   : L"Camylla camera: FrameServer service SID absent\n");
+    }
     CloseHandle(token);
 }
 
