@@ -127,6 +127,18 @@ internal static class SelfTest
             pixels[8] <= 2 && pixels[9] <= 3 && pixels[10] >= 253 &&
             pixels.AsSpan(16, 4).SequenceEqual(new byte[] { 0, 0, 0, 255 }),
             "stride-aware NV12 to BGRA black, white, and red conversion");
+        const int hdWidth = 1280, hdHeight = 720;
+        var hdSource = new byte[hdWidth * hdHeight * 3 / 2];
+        hdSource.AsSpan(0, hdWidth * hdHeight).Fill(63);
+        for (var i = hdWidth * hdHeight; i < hdSource.Length; i += 2)
+        {
+            hdSource[i] = 102; hdSource[i + 1] = 240;
+        }
+        using var hdFrame = OwnedNv12Frame.CopyFromManaged(hdSource, hdWidth, hdHeight, hdWidth, 0, 0);
+        var hdPixels = new byte[Nv12BgraConverter.RequiredBytes(hdFrame)];
+        Nv12BgraConverter.Convert(hdFrame, hdPixels);
+        Check(hdPixels[0] <= 2 && hdPixels[1] <= 3 && hdPixels[2] >= 253 && hdPixels[3] == 255,
+            "BT.709 limited-range HD red conversion");
         Console.WriteLine("NV12 stride and color conversion self-test passed");
     }
 
