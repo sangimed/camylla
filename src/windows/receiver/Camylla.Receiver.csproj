@@ -6,6 +6,10 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="core\**\*.cs" />
+    <ProjectReference Include="core\Camylla.Receiver.Core.csproj" />
+  </ItemGroup>
   <Target Name="CopyNativeDecoder" AfterTargets="Build"
           Condition="Exists('$(MSBuildThisFileDirectory)..\..\..\build\src\windows\receiver\native\$(Configuration)\camylla_mf_decoder.dll')">
     <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\..\build\src\windows\receiver\native\$(Configuration)\camylla_mf_decoder.dll"

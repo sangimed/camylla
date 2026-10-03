@@ -1,0 +1,34 @@
+<Window
+    x:Class="Camylla.Desktop.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Camylla preview">
+    <Grid Padding="20" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Spacing="6">
+            <TextBlock Text="Camylla" FontSize="26" FontWeight="SemiBold" />
+            <TextBlock x:Name="StateText" Text="Waiting for phone" />
+        </StackPanel>
+        <Border Grid.Row="1" Background="#FF20252B" MinHeight="360" CornerRadius="8">
+            <Grid>
+                <Image x:Name="PreviewImage" Stretch="Uniform" />
+                <TextBlock x:Name="WaitingText" Text="Waiting for a phone stream"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           FontSize="22" Foreground="White" />
+            </Grid>
+        </Border>
+        <StackPanel Grid.Row="2" Spacing="4">
+            <TextBlock Text="Development connection setup" FontWeight="SemiBold" />
+            <TextBlock Text="Enter this PC's LAN address, certificate pin, and secret in the Android proof app. Start capture on the phone." TextWrapping="Wrap" />
+            <TextBlock Text="Control port 58413 · Video port 58414" />
+            <TextBox x:Name="PinBox" Header="Certificate SHA-256 pin" IsReadOnly="True" />
+            <TextBox x:Name="SecretBox" Header="Development session secret" IsReadOnly="True" />
+        </StackPanel>
+        <TextBlock x:Name="DiagnosticsText" Grid.Row="3" TextWrapping="Wrap" />
+    </Grid>
+</Window>

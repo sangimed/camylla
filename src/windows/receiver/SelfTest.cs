@@ -1,5 +1,8 @@
 using System.Buffers.Binary;
 using System.Text;
+using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.Sockets;
 
 namespace Camylla.Receiver;
 
@@ -66,6 +69,8 @@ internal static class SelfTest
 
     public static async Task RunAsync()
     {
+        TestOwnedLatestFrames();
+        await TestReceiverLifecycleAsync();
         var frame = new byte[Wire.VideoHeaderSize + 4];
         "CMYV"u8.CopyTo(frame);
         frame[4] = Wire.Version;
@@ -98,6 +103,72 @@ internal static class SelfTest
         try { Wire.RequireBoundSession("AA", "BB"); throw new Exception("Self-test failed: mismatched session"); }
         catch (System.Security.Authentication.AuthenticationException) { }
         Console.WriteLine("Receiver wire self-test passed");
+    }
+
+    private static async Task TestReceiverLifecycleAsync()
+    {
+        static int FreePort()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+            return port;
+        }
+        var control = FreePort();
+        var video = FreePort();
+        while (video == control) video = FreePort();
+        for (var cycle = 0; cycle < 2; cycle++)
+        {
+            using var host = new ReceiverHost(control, video);
+            host.Log += _ => { };
+            using var stop = new CancellationTokenSource();
+            var run = host.RunAsync(stop.Token);
+            await Task.Delay(100);
+            Check(!run.IsCompleted, "receiver listener started");
+            stop.Cancel();
+            await run.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(host.Snapshot().State == "Disconnected" &&
+                host.Frames.PendingDepth == 0, "receiver shutdown clears state and frames");
+        }
+        Console.WriteLine("Receiver start, shutdown, and same-port restart self-test passed");
+    }
+
+    private static void TestOwnedLatestFrames()
+    {
+        var source = Enumerable.Repeat((byte)42, 12).ToArray();
+        var first = OwnedNv12Frame.CopyFromManaged(source, 4, 2, 4, 100, 200);
+        source[0] = 99;
+        Check(first.Pixels[0] == 42 && first.PixelFormat == "NV12" &&
+            first.Width == 4 && first.Height == 2 && first.Stride == 4 &&
+            first.Pts100ns == 100 && first.DecodedAtTicks == 200, "managed NV12 ownership and metadata");
+        var native = Marshal.AllocHGlobal(source.Length);
+        try
+        {
+            Marshal.Copy(source, 0, native, source.Length);
+            var copy = OwnedNv12Frame.CopyFromBorrowed(native, 12, 4, 2, 4, 300, 400);
+            Marshal.WriteByte(native, 0, 0);
+            Check(copy.Pixels[0] == 99, "borrowed NV12 copied before callback returns");
+        }
+        finally { Marshal.FreeHGlobal(native); }
+        var queue = new LatestFrameStore();
+        queue.Publish(first);
+        queue.Publish(OwnedNv12Frame.CopyFromManaged(source, 4, 2, 4, 300, 400));
+        Check(queue.PendingDepth == 1 && queue.HighWater == 1 && queue.Superseded == 1 &&
+            queue.Published == 2 && queue.TakeLatest()?.Pts100ns == 300 && queue.PendingDepth == 0,
+            "latest-frame replacement and bounded depth");
+        using var host = new ReceiverHost(58423, 58424);
+        using var preview = host.CreateFrameReader();
+        using var publisher = host.CreateFrameReader();
+        host.PublishFrame(first);
+        host.PublishFrame(OwnedNv12Frame.CopyFromManaged(source, 4, 2, 4, 300, 400));
+        Check(preview.Store.PendingDepth == 1 && publisher.Store.PendingDepth == 1 &&
+            preview.Store.HighWater == 1 && publisher.Store.HighWater == 1 &&
+            preview.Store.Superseded == 1 && publisher.Store.Superseded == 1 &&
+            preview.Store.TakeLatest()?.Pts100ns == 300 &&
+            publisher.Store.TakeLatest()?.Pts100ns == 300,
+            "independent bounded frame readers");
+        Console.WriteLine("Owned NV12 frame and latest-frame handoff self-test passed");
     }
 
     private static void Check(bool value, string name)

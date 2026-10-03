@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Camylla.Receiver" />
+  </ItemGroup>
+  <Target Name="CopyNativeDecoder" AfterTargets="Build"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\..\..\..\build\src\windows\receiver\native\$(Configuration)\camylla_mf_decoder.dll')">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\..\..\..\build\src\windows\receiver\native\$(Configuration)\camylla_mf_decoder.dll"
+          DestinationFolder="$(TargetDir)" />
+  </Target>
+</Project>
