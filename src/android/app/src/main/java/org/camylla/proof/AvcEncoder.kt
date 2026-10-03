@@ -5,10 +5,12 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.os.Handler
 import android.os.Looper
+import android.os.Bundle
 import android.util.Log
 import android.view.Surface
 import java.io.File
 import java.nio.ByteBuffer
+import java.io.ByteArrayOutputStream
 
 data class EncodedProgress(
     val frames: Long, val keyframes: Long, val fps: Double, val timestampUs: Long,
@@ -22,6 +24,8 @@ class AvcEncoder(
     output: File,
     private val onUpdate: (EncodedProgress) -> Unit,
     private val onError: (String) -> Unit,
+    private val onCodecConfig: (ByteArray) -> Unit = {},
+    private val onAccessUnit: (ByteArray, Long, Boolean) -> Unit = { _, _, _ -> },
 ) : AutoCloseable {
     private val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
     private val counter = FrameCounter()
@@ -33,6 +37,12 @@ class AvcEncoder(
     val surface: Surface
     @Volatile private var stopping = false
     private val drainThread: Thread
+
+    fun requestSyncFrame() {
+        if (!stopping) runCatching {
+            codec.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) })
+        }.onFailure { Log.w(TAG, "Sync frame request failed", it) }
+    }
 
     init {
         try {
@@ -58,6 +68,8 @@ class AvcEncoder(
         val info = MediaCodec.BufferInfo()
         var deadline = Long.MAX_VALUE
         var configWritten = false
+        val partial = ByteArrayOutputStream()
+        var partialKey = false
         try {
             while (true) {
                 if (stopping && deadline == Long.MAX_VALUE) deadline = System.nanoTime() + 3_000_000_000L
@@ -70,12 +82,15 @@ class AvcEncoder(
                         val format = codec.outputFormat
                         Log.i(TAG, "Encoder format: $format")
                         var hasConfig = false
+                        val config = ByteArrayOutputStream()
                         for (key in listOf("csd-0", "csd-1")) {
                             format.getByteBuffer(key)?.let {
                                 sink.writeAvc(it.duplicate())
+                                config.write(AvcAccessUnit.annexB(it.duplicate()))
                                 hasConfig = true
                             }
                         }
+                        if (hasConfig) onCodecConfig(config.toByteArray())
                         configWritten = configWritten || hasConfig
                     }
                     MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
@@ -88,12 +103,20 @@ class AvcEncoder(
                                 if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
                                     if (!configWritten) {
                                         sink.writeAvc(data.slice())
+                                        onCodecConfig(AvcAccessUnit.annexB(data.slice()))
                                         configWritten = true
                                     }
                                 } else {
                                     sink.writeAvc(data.slice())
+                                    val bytes = AvcAccessUnit.annexB(data.slice())
+                                    if (partial.size() + bytes.size > M3Wire.MAX_VIDEO_BYTES) throw IllegalArgumentException("Partial AVC access unit exceeds limit")
+                                    partial.write(bytes)
+                                    partialKey = partialKey || info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
                                     if (info.flags and MediaCodec.BUFFER_FLAG_PARTIAL_FRAME != 0) continue
-                                    counter.add(info.presentationTimeUs, info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0)
+                                    onAccessUnit(partial.toByteArray(), info.presentationTimeUs, partialKey)
+                                    partial.reset()
+                                    counter.add(info.presentationTimeUs, partialKey)
+                                    partialKey = false
                                     if (counter.frames % 30L == 0L) {
                                         Log.i(TAG, "frames=${counter.frames} fps=${"%.1f".format(counter.fps())} ptsUs=${counter.lastTimestampUs} gaps=${counter.timestampGaps} sinkBytes=${sink.bytes}")
                                     }

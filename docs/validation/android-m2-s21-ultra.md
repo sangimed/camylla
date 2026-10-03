@@ -1,6 +1,6 @@
 # M2 Android feasibility: S21 Ultra validation
 
-**Status:** physical-device validation pending. Source and local JVM tests do not establish the M2 exit gate.
+**Status:** M2 physical feasibility validated on one Samsung Galaxy S21 Ultra. This is not a broad Android compatibility claim. Detailed thermal/battery, other-mode, and long-duration measurements remain unrecorded.
 
 ## Build and install
 
@@ -29,24 +29,23 @@ The logcat command runs until interrupted. Start it before the capture run. Reco
 
 ## Physical validation record
 
-Record exact phone model, Android version/build, app commit, codec name, camera ID, charge state, ambient temperature, test date, and test operator. For every mode below record requested/actual resolution, encoded frame count, five-second FPS samples and minimum, timestamp-gap count, keyframes, file validity, and any camera/codec errors. A 64 MiB file cap means long-run file validity can be checked with an early segment; the frame counters continue for the whole run.
+The recorded physical run used a Samsung Galaxy S21 Ultra and the hardware encoder `c2.exynos.h264.encoder`. Exact Android build, camera ID, charge state, ambient temperature, test date/operator, and app commit are not present in the available evidence; they are not inferred here. The CameraX `Preview.SurfaceProvider` → MediaCodec input Surface path produced valid Annex B H.264. A 64 MiB file cap means a diagnostic file may cover only an early segment of a long run.
 
 | Check | Result / evidence |
 | --- | --- |
-| Rear 1280×720 at measured ~30 FPS | Pending |
-| Rear 1920×1080 at measured ~30 FPS | Pending |
-| Front 1280×720 at measured ~30 FPS | Pending |
-| Front 1920×1080 at measured ~30 FPS, if supported | Pending |
-| Rear ↔ front switch, fresh encoder/keyframe/file | Pending |
-| Zoom range and visible change on both lenses | Pending |
-| Continuous autofocus near ↔ far and support report | Pending |
-| Portrait/landscape rotation metadata and decoded picture | Pending |
-| Home/app switch while capture continues | Pending |
-| Screen off, screen on, return to app, notification Stop | Pending |
-| Repeated start/stop (at least five cycles), no stale camera | Pending |
-| At least 10 minutes continuous capture, FPS over time | Pending |
-| Thermal status over time and physical heat observation | Pending |
-| Battery start/end %, charging state, elapsed time | Pending |
-| Valid H.264 SPS/PPS, keyframes and decoded output | Pending |
+| Rear 1280×720 at requested 30 FPS | About 29.9 encoded FPS; zero output timestamp gaps over 50 ms in the recorded run |
+| Rear 1920×1080 at measured ~30 FPS | No exact result recorded |
+| Front 1280×720 at measured ~30 FPS | No exact result recorded |
+| Front 1920×1080 at measured ~30 FPS, if supported | No exact result recorded |
+| Rear ↔ front switch, fresh encoder/keyframe/file | Camera switching manually exercised successfully; exact counts not recorded |
+| Zoom, autofocus, mode/control paths | Manually exercised successfully; continuous-video AF was requested; individual numeric results not recorded |
+| Portrait/landscape rotation metadata and decoded picture | No exact result recorded |
+| Home/app switch while capture continues | Foreground-service/background/return lifecycle manually validated |
+| Screen off, screen on, return to app, notification Stop | Screen off/on manually validated; exact timings not recorded |
+| Repeated start/stop | Manually validated; cycle count not recorded |
+| Continuous duration, FPS over time | Recorded run yielded 3,984 frames parsed by `ffprobe`; no exact duration or minute-by-minute samples recorded |
+| Thermal status and physical heat | No numeric result recorded |
+| Battery start/end %, charging state, elapsed time | No numeric result recorded |
+| Valid H.264 SPS/PPS, keyframes and decoded output | `ffprobe` parsed 3,984 frames; H.264 High profile, `yuv420p`, BT.709, progressive; full FFmpeg decode completed with no errors |
 
-If 1080p or a control is unavailable, record the exact error, camera ID, Android build and logs. Run 720p first, then 1080p, on both lenses. A phone maintaining 30 FPS for a short run does not establish sustained reliability. Do not mark M2 complete until the S21 Ultra has produced valid sustained H.264 at the required supported baseline modes and the lifecycle, thermal and battery observations above are captured. Optional 60 FPS is outside this proof's gate.
+The physical result establishes the initial 720p30 producer direction and the manually exercised lifecycle paths on this phone. It does not establish sustained thermal/battery behavior, every mode on both lenses, or behavior on other Android devices. Preserve those gaps for later compatibility and release validation; optional 60 FPS remains outside the core gate.

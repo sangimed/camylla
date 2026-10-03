@@ -41,10 +41,11 @@ class CaptureService : LifecycleService() {
     private var provider: ProcessCameraProvider? = null
     private var preview: Preview? = null
     private var camera: Camera? = null
-    private var encoder: AvcEncoder? = null
+    @Volatile private var encoder: AvcEncoder? = null
+    private var networkSender: NetworkSender? = null
     private var lens = CameraSelector.LENS_FACING_BACK
     private var mode = Mode.HD
-    private var generation = 0
+    @Volatile private var generation = 0
     private var sessionStartMs = 0L
     private var fileNumber = 0
     private var rotation = Surface.ROTATION_0
@@ -55,6 +56,7 @@ class CaptureService : LifecycleService() {
 
     fun stats(): StatsSnapshot = snapshot.copy(
         elapsedSeconds = if (sessionStartMs == 0L) 0 else (SystemClock.elapsedRealtime() - sessionStartMs) / 1000,
+        network = networkSender?.stats() ?: NetworkProgress(),
     )
 
     override fun onBind(intent: Intent): IBinder {
@@ -96,6 +98,22 @@ class CaptureService : LifecycleService() {
                 }
                 sessionStartMs = SystemClock.elapsedRealtime()
                 snapshot = StatsSnapshot(state = "Starting", requestedMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
+                val host = intent.getStringExtra(EXTRA_HOST).orEmpty().trim()
+                val pin = intent.getStringExtra(EXTRA_PIN).orEmpty().trim()
+                val secret = intent.getStringExtra(EXTRA_SECRET).orEmpty().trim()
+                if (host.isNotEmpty() || pin.isNotEmpty() || secret.isNotEmpty()) {
+                    try {
+                        networkSender = NetworkSender(host, pin, secret, mode.label,
+                            if (lens == CameraSelector.LENS_FACING_BACK) "rear" else "front") {
+                            encoder?.requestSyncFrame()
+                        }
+                    } catch (error: Exception) {
+                        fail("Network setup: ${error.message}")
+                        endSession()
+                        stopSelf()
+                        return Service.START_NOT_STICKY
+                    }
+                }
                 orientationListener = object : OrientationEventListener(this) {
                     override fun onOrientationChanged(degrees: Int) {
                         if (degrees == ORIENTATION_UNKNOWN) return
@@ -130,12 +148,20 @@ class CaptureService : LifecycleService() {
 
     fun switchCamera() {
         if (sessionStartMs == 0L) return
+        if (networkSender != null) {
+            snapshot = snapshot.copy(error = "Stop and restart to negotiate a different lens")
+            return
+        }
         lens = if (lens == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
         bindCamera()
     }
 
     fun setMode(value: Mode) {
         if (sessionStartMs == 0L || mode == value) return
+        if (networkSender != null) {
+            snapshot = snapshot.copy(error = "Stop and restart to negotiate a different mode")
+            return
+        }
         mode = value
         bindCamera()
     }
@@ -155,6 +181,7 @@ class CaptureService : LifecycleService() {
         camera = null
         encoder?.close()
         encoder = null
+        networkSender?.newEncoder()
         snapshot = StatsSnapshot(state = "Binding", requestedMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
         try {
             val selector = CameraSelector.Builder().requireLensFacing(lens).build()
@@ -198,6 +225,10 @@ class CaptureService : LifecycleService() {
                             )
                         },
                         onError = { message -> if (token == generation) fail(message) },
+                        onCodecConfig = { bytes -> if (token == generation) networkSender?.codecConfig(bytes) },
+                        onAccessUnit = { bytes, ptsUs, key ->
+                            if (token == generation) networkSender?.offer(bytes, ptsUs, key)
+                        },
                     )
                     encoder = activeEncoder
                     snapshot = snapshot.copy(
@@ -259,7 +290,7 @@ class CaptureService : LifecycleService() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentTitle("Camylla camera proof active")
-            .setContentText("Local H.264 diagnostic capture")
+            .setContentText("H.264 capture / M3 transport proof")
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(
                 Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel), "Stop", stop,
@@ -278,6 +309,8 @@ class CaptureService : LifecycleService() {
         camera = null
         encoder?.close()
         encoder = null
+        networkSender?.close()
+        networkSender = null
         stopForeground(Service.STOP_FOREGROUND_REMOVE)
         sessionStartMs = 0L
         snapshot = snapshot.copy(state = "Stopped")
@@ -303,5 +336,8 @@ class CaptureService : LifecycleService() {
         const val ACTION_STOP = "org.camylla.proof.STOP"
         const val EXTRA_MODE = "mode"
         const val EXTRA_LENS = "lens"
+        const val EXTRA_HOST = "host"
+        const val EXTRA_PIN = "pin"
+        const val EXTRA_SECRET = "secret"
     }
 }

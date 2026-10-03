@@ -11,20 +11,24 @@ namespace camylla::protocol {
 
 inline constexpr std::array<std::byte, 4> kVideoMagic{
     std::byte{'C'}, std::byte{'M'}, std::byte{'Y'}, std::byte{'V'}};
-inline constexpr std::uint8_t kVideoProtocolMajor = 1;
+inline constexpr std::uint8_t kVideoProtocolMajor = 2;
 inline constexpr std::uint8_t kVideoProtocolMinor = 0;
-inline constexpr std::size_t kVideoHeaderSize = 36;
+inline constexpr std::size_t kVideoHeaderSize = 64;
 inline constexpr std::uint32_t kMaxVideoPayloadSize = 4U * 1024U * 1024U;
 
 enum class VideoFrameFlag : std::uint16_t {
     key_frame = 1U << 0U,
     codec_config = 1U << 1U,
+    normal_frame = 1U << 2U,
 };
 
 struct VideoFrame {
     std::uint64_t sequence_number{};
     std::uint32_t configuration_generation{};
     std::uint64_t capture_timestamp_us{};
+    std::uint64_t send_timestamp_us{};
+    std::array<std::byte, 16> session_id{};
+    std::uint16_t message_type{1};
     std::uint16_t flags{};
     std::vector<std::byte> payload;
 
