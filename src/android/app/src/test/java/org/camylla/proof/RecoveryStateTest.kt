@@ -6,6 +6,46 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class RecoveryStateTest {
+    @Test fun streamingClearsCurrentErrorButRetainsHistory() {
+        val previous = NetworkProgress(state = "Recovering", error = "Control read: Truncated control message",
+            networkErrors = 17, resets = 3, consecutiveFailures = 2)
+        val current = previous.streamed(2)
+        assertEquals("Streaming", current.state)
+        assertEquals("", current.error)
+        assertEquals(17, current.networkErrors)
+        assertEquals(3, current.resets)
+        assertEquals(0, current.consecutiveFailures)
+        assertEquals(2, current.successfulRecoveries)
+    }
+
+    @Test fun unavailableVideoTransportDropsWithoutQueueOrRepeatedSyncRequests() {
+        val transport = VideoTransportGate()
+        val queue = RecoveryQueue<ByteArray>({ it.size }, { false })
+        val sync = SyncGate()
+        var syncRequests = 0
+        repeat(313) {
+            assertFalse(transport.enqueue(queue, byteArrayOf(1)))
+        }
+        assertTrue(queue.isEmpty)
+        assertEquals(0, syncRequests)
+        transport.ready { syncRequests++ }
+        transport.ready { syncRequests++ }
+        sync.reset()
+        assertFalse(sync.accept(false, true))
+        assertTrue(sync.accept(true, true))
+        assertTrue(transport.enqueue(queue, byteArrayOf(1)))
+        assertEquals(1, queue.size)
+        transport.unavailable()
+        queue.clear()
+        repeat(313) {
+            assertFalse(transport.enqueue(queue, byteArrayOf(1)))
+        }
+        assertTrue(queue.isEmpty)
+        assertEquals(1, syncRequests)
+        transport.ready { syncRequests++ }
+        assertEquals(2, syncRequests)
+    }
+
     @Test fun temporaryFailuresEventuallyStreamAndResetBackoff() {
         val recovery = RecoveryState()
         repeat(5) { recovery.attempting(); recovery.failed() }

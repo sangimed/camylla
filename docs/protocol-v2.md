@@ -1,6 +1,7 @@
 # M3 transport protocol v2
 
-Status: implementation proof, pending physical Android-to-Windows validation. This
+Status: M3 implementation proof with physical Android-to-Windows validation in
+[the M3 record](validation/android-windows-m3.md). This
 extends the portable `CMYV` framing from [v1](protocol-v1.md); v1 remains historical
 and is rejected by the v2 receiver. All connections are TLS/TCP. The Windows user
 process owns both listeners, session state and decoding. The virtual-camera DLL has
@@ -91,19 +92,26 @@ resynchronization inside an unauthenticated byte stream.
 
 The Android sender queue holds at most four access units and 8 MiB of payloads;
 the oldest pending item may be at most 250 ms old. Overflow or stale age clears the
-queue, closes the current video socket, requests a keyframe and reconnects. The
+queue, closes the current video socket and reconnects; the new bind requests
+a fresh keyframe. While
+no bound video transport is usable, encoder output is drained and discarded
+without building the network queue or repeatedly requesting sync frames. A new
+bound video session clears stale state and requests one fresh sync point. The
 receiver decodes directly while reading, retaining at most one video access unit
-in its parser. Control records are processed one at a time. The Android control
-reconnect loop is limited to 20 attempts with 250 ms between attempts; TCP connect
-and TLS handshake have a 1.5 s timeout. The sender does not replay an old queue
-after reconnection. TLS/TCP may still have bytes in flight; network impairment must
-be measured physically before claiming the roughly five-second recovery target.
+in its parser. Control records are processed one at a time. The Android sender
+retries for the lifetime of the explicit capture session with capped 250 ms to
+4 s backoff and no finite lifetime attempt budget; Stop cancels recovery. TCP
+connect and TLS handshake have a 1.5 s timeout. The sender does not replay an
+old queue after reconnection. TLS/TCP may still have bytes in flight. Physical
+Wi-Fi recovery passed, but exact recovery duration was not measured.
 
 The phone PTS and send timestamps are from Android clocks. Windows logs receive
-and decoded-frame `Stopwatch` ticks. Android and Windows monotonic clocks are not
-synchronized; subtracting their absolute values is not end-to-end latency. Local
-queue age and Windows receive-to-decode time can be measured separately. A future
-latency study needs a stated clock-offset or external measurement method.
+and decoded-frame `Stopwatch` ticks and the latest same-clock receive-to-decoder
+callback duration in milliseconds. Android and Windows monotonic clocks are not
+synchronized; subtracting their absolute values is not end-to-end latency. A
+decoder callback can correspond to an earlier submitted access unit, so this
+local duration is not full camera-to-Windows latency. A future latency study
+needs a stated clock-offset or external measurement method.
 
 ## Decoded-frame seam
 

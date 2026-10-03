@@ -40,6 +40,25 @@ internal class SyncGate {
     }
 }
 
+/** Encoded output is useful only after a video channel has completed binding. */
+internal class VideoTransportGate {
+    var isReady = false
+        private set
+
+    fun ready(requestSync: () -> Unit) {
+        if (isReady) return
+        isReady = true
+        requestSync()
+    }
+    fun unavailable() { isReady = false }
+
+    fun <T> enqueue(queue: RecoveryQueue<T>, unit: T): Boolean {
+        if (!isReady) return false
+        queue.add(unit)
+        return true
+    }
+}
+
 /** Caller synchronizes access; clear releases every queued payload immediately. */
 internal class RecoveryQueue<T>(private val sizeOf: (T) -> Int, private val isConfig: (T) -> Boolean) {
     private val items = java.util.ArrayDeque<T>()
