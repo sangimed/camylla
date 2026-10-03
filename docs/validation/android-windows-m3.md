@@ -1,9 +1,19 @@
 # M3 secure Android-to-Windows transport validation
 
-**Status:** implementation and local build checks complete; physical decoded-frame
-acceptance and recovery measurements pending. Do not mark M3 complete from this
-document until a real phone → local Wi-Fi → Windows run increases decoded-frame
-count with recorded diagnostics.
+**Status:** physical S21 Ultra 720p30 streaming and receiver process restart recovery
+were observed. Physical phone Wi-Fi off/on recovery failed and must be retested
+after the recovery fix. M3 remains incomplete.
+
+The Wi-Fi interruption left Android encoding at about 30 FPS but stopped network
+transmission. `Sent` stayed frozen and Windows remained `Recovering` with frozen
+`receivedAU` and `decoded`. Immediate `ENETUNREACH` failures and temporary cellular
+routing to the private PC LAN address consumed the sender's lifetime 20-attempt
+retry budget. The old receiver control session could also remain active without
+control traffic. The sender now retries with capped backoff throughout an explicit
+capture session, renews the authenticated control/video session after a channel
+failure, drops stale queued video, and requests a new config/keyframe start. Control
+ping/pong liveness lets both peers retire abandoned sessions. These changes still
+require physical validation.
 
 ## Setup
 
@@ -48,26 +58,23 @@ session. The M3 path requires all three address/pin/secret fields.
 
 | Measurement | Physical result |
 | --- | --- |
-| Phone / encoder name | S21 Ultra / pending M3 run log |
-| Selected resolution / requested FPS | Rear 1280×720 / 30 planned; pending actual negotiation log |
-| Sent frames / bytes | Pending |
-| Received access units / sequence / PTS | Pending |
-| Decoded frames / NV12 dimensions | Pending |
+| Phone / encoder name | Samsung Galaxy S21 Ultra / CameraX + MediaCodec H.264 |
+| Selected resolution / requested FPS | 1280×720 / approximately 30 FPS observed |
+| Sent frames / bytes | Increased on healthy path; froze after Wi-Fi interruption; exact count pending |
+| Received access units / sequence / PTS | Increased on healthy path; froze after Wi-Fi interruption; exact count pending |
+| Decoded frames / NV12 dimensions | Increased continuously on healthy path; NV12 1280×720; froze after Wi-Fi interruption |
 | Keyframes | Pending |
 | Android queue high-water mark | Pending |
 | Windows queue high-water mark | Pending |
 | Memory behavior over run | Pending |
 | Network errors / reconnect attempts | Pending |
 | Decoder errors / resets | Pending |
-| Recovery time after connectivity returns | Pending |
+| Recovery time after connectivity returns | Failed before fix; retest pending |
 
 The repository's M2 physical result is recorded separately in
-[android-m2-s21-ultra.md](android-m2-s21-ultra.md). It does not imply an M3 network
-or Windows decode result. At implementation time, the attached `SM-G998B` had
-Wi-Fi address `192.168.1.201` and could reach the PC's LAN address
-`192.168.1.236`; its lock screen prevented starting the app's capture session.
-No video access units or decoded frames were measured in that reachability check.
-Those addresses are transient test context, not protocol configuration.
+[android-m2-s21-ultra.md](android-m2-s21-ultra.md). Earlier reachability-only checks
+in this document predated the physical M3 run reported above. Exact counters and
+timings from that run are not available here and must be captured during retest.
 
 ## Short disconnect/recovery test to perform
 
@@ -76,14 +83,27 @@ restart it and observe the existing phone session reauthenticate using its
 in-memory development secret. Separately interrupt and restore the phone's Wi-Fi briefly while
 the receiver remains open. Record the exact interruption and first new decoded
 frame times, sent/received sequence values, queue peak, dropped frames, sync
-requests, decoder resets and errors. Check that old dependent frames are not
+requests, decoder resets and errors. Repeat Wi-Fi off/on across multiple outages,
+including more than 20 cumulative connection failures, and check that the phone
+remains `Recovering` until LAN connectivity returns. Check that old dependent frames are not
 replayed, codec configuration and a fresh keyframe precede resumed decoding, and
 the phone's explicit Stop still ends capture. The design target is recovery within
-about five seconds after usable connectivity returns; no such measurement has yet
-been made.
+about five seconds after usable connectivity returns; no successful Wi-Fi recovery
+measurement has yet been made. Also repeat receiver process stop/restart recovery
+and confirm the existing healthy 720p30 decoded-frame path.
 
 ## Local checks completed
 
+- For this recovery change, Android `assembleDebug` and JVM tests passed, including
+  retry/backoff, stop cancellation, queue clearing, and fresh config/keyframe gate
+  tests. Windows CMake Debug build and CTest passed. The changed .NET receiver built
+  in an isolated output directory because the physical-test receiver was still
+  running on the default ports with a phone connection; it was left undisturbed.
+- The changed receiver's wire self-test and decoder smoke test passed. On separate
+  local ports, its synthetic TLS loopback decoded 91 NV12 frames from 93 access
+  units with zero decoder errors, then retired an idle control session and accepted
+  a new authenticated control/video session with a different session ID. This is
+  automated local evidence only, not a physical Wi-Fi recovery pass.
 - Android `assembleDebug` and `testDebugUnitTest` passed.
 - Full Windows CMake Debug build and CTest suite passed.
 - Receiver .NET build, wire self-test and Media Foundation decoder create/reset

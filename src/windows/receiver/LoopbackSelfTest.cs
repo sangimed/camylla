@@ -10,11 +10,11 @@ namespace Camylla.Receiver;
 /** Synthetic TLS integration check. This is never physical Android evidence. */
 internal static class LoopbackSelfTest
 {
-    public static async Task RunAsync(string path)
+    public static async Task RunAsync(string path, int controlPort, int videoPort)
     {
         var secret = DevelopmentIdentity.LoadOrCreateSecret();
         var pin = SHA256.HashData(DevelopmentIdentity.LoadOrCreate().RawData);
-        using var control = await ConnectAsync(58413, pin);
+        using var control = await ConnectAsync(controlPort, pin);
         await Wire.WriteControlAsync(control, new { type = "hello", version = Wire.Version,
             codec = "h264", modes = new[] { "1280x720@30" }, mode = "1280x720@30", lens = "rear", secret }, default);
         using var welcome = await Wire.ReadControlAsync(control, default);
@@ -22,7 +22,7 @@ internal static class LoopbackSelfTest
         if (Wire.RequiredString(welcome.RootElement, "type") != "welcome")
             throw new InvalidDataException("Loopback control was not welcomed");
 
-        using (var wrongVideo = await ConnectAsync(58414, pin))
+        using (var wrongVideo = await ConnectAsync(videoPort, pin))
         {
             await Wire.WriteControlAsync(wrongVideo, new { type = "bind", version = Wire.Version,
                 session = "00000000000000000000000000000000", secret }, default);
@@ -31,7 +31,7 @@ internal static class LoopbackSelfTest
                 throw new InvalidDataException("Mismatched video channel was accepted");
         }
 
-        using var video = await ConnectAsync(58414, pin);
+        using var video = await ConnectAsync(videoPort, pin);
         await Wire.WriteControlAsync(video, new { type = "bind", version = Wire.Version, session, secret }, default);
         using var ready = await Wire.ReadControlAsync(video, default);
         if (Wire.RequiredString(ready.RootElement, "type") != "ready")
@@ -55,6 +55,25 @@ internal static class LoopbackSelfTest
         await video.FlushAsync();
         await Task.Delay(3000);
         Console.WriteLine($"Loopback TLS bound; mismatched channel rejected; sent {units.Count} synthetic access units plus a sequence-gap recovery point");
+
+        // No control ping: the receiver must retire this abandoned logical session.
+        // A fresh authenticated hello and video bind must then get a new ID.
+        await Task.Delay(6000);
+        using var freshControl = await ConnectAsync(controlPort, pin);
+        await Wire.WriteControlAsync(freshControl, new { type = "hello", version = Wire.Version,
+            codec = "h264", modes = new[] { "1280x720@30" }, mode = "1280x720@30", lens = "rear", secret }, default);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var freshWelcome = await Wire.ReadControlAsync(freshControl, timeout.Token);
+        var freshSession = Wire.RequiredString(freshWelcome.RootElement, "session");
+        if (Wire.RequiredString(freshWelcome.RootElement, "type") != "welcome" || freshSession == session)
+            throw new InvalidDataException("Stale control session blocked fresh authentication");
+        using var freshVideo = await ConnectAsync(videoPort, pin);
+        await Wire.WriteControlAsync(freshVideo, new { type = "bind", version = Wire.Version,
+            session = freshSession, secret }, default);
+        using var freshReady = await Wire.ReadControlAsync(freshVideo, timeout.Token);
+        if (Wire.RequiredString(freshReady.RootElement, "type") != "ready")
+            throw new InvalidDataException("Fresh video channel was not bound");
+        Console.WriteLine("Stale control session retired; fresh authenticated control/video session bound");
     }
 
     private static async Task<SslStream> ConnectAsync(int port, byte[] pin)

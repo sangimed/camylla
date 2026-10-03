@@ -164,7 +164,8 @@ class MainActivity : Activity() {
             Queued: ${value.network.queuedFrames}  Sent: ${value.network.sentFrames}  Bytes: ${value.network.sentBytes}
             Queue depth/high-water: ${value.network.depth}/${value.network.highWater}
             Resets: ${value.network.resets}  Dropped: ${value.network.droppedFrames}  Network errors: ${value.network.networkErrors}
-            Reconnect attempts: ${value.network.reconnectAttempts}  Last sequence: ${value.network.lastSequence}
+            Connection attempts: ${value.network.connectionAttempts}  Consecutive failures: ${value.network.consecutiveFailures}
+            Successful recoveries: ${value.network.successfulRecoveries}  Last sequence: ${value.network.lastSequence}
         """.trimIndent()
     }
 

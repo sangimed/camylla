@@ -9,7 +9,6 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
-import java.util.ArrayDeque
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
@@ -19,7 +18,8 @@ data class NetworkProgress(
     val state: String = "Disconnected", val queuedFrames: Long = 0, val sentFrames: Long = 0,
     val sentBytes: Long = 0, val depth: Int = 0, val highWater: Int = 0, val resets: Long = 0,
     val droppedFrames: Long = 0, val keyframes: Long = 0, val networkErrors: Long = 0,
-    val reconnectAttempts: Long = 0, val lastSequence: Long = 0, val error: String = "",
+    val connectionAttempts: Long = 0, val consecutiveFailures: Int = 0,
+    val successfulRecoveries: Long = 0, val lastSequence: Long = 0, val error: String = "",
 )
 
 /** One explicit phone-started session. Socket work is confined to worker/control threads. */
@@ -31,7 +31,8 @@ class NetworkSender(
     private data class PendingUnit(val payload: ByteArray, val ptsUs: Long, val flag: Int,
                                    val queuedNs: Long, val generation: Int)
     private val lock = Object()
-    private val queue = ArrayDeque<PendingUnit>()
+    private val retryWaiter = RetryWaiter()
+    private val queue = RecoveryQueue<PendingUnit>({ it.payload.size }, { it.flag == M3Wire.CONFIG })
     private val pin = parsePin(pinHex)
     private val tls = SSLContext.getInstance("TLS").apply {
         init(null, arrayOf<TrustManager>(PinnedTrust(pin)), null)
@@ -40,11 +41,11 @@ class NetworkSender(
     @Volatile private var stopping = false
     @Volatile private var videoSocket: SSLSocket? = null
     @Volatile private var controlSocket: SSLSocket? = null
+    @Volatile private var connectingSocket: Socket? = null
     @Volatile private var progress = NetworkProgress()
     private var config: ByteArray? = null
     private var generation = 0
-    private var waitingForKey = true
-    private var queueBytes = 0
+    private val syncGate = SyncGate()
     private var sequence = 0L
 
     init {
@@ -73,42 +74,40 @@ class NetworkSender(
         if (stopping) return@synchronized
         if (bytes.isEmpty() || bytes.size > M3Wire.MAX_VIDEO_BYTES) { resetLocked(); return@synchronized }
         val now = SystemClock.elapsedRealtimeNanos()
-        if (queue.isNotEmpty() && now - queue.first.queuedNs > MAX_AGE_NS ||
-            queue.size + 2 > MAX_DEPTH || queueBytes + bytes.size + (if (waitingForKey) config?.size ?: 0 else 0) > MAX_QUEUE_BYTES) {
+        if (!queue.isEmpty && now - queue.first.queuedNs > MAX_AGE_NS ||
+            queue.size + 2 > MAX_DEPTH || queue.bytes + bytes.size + (if (syncGate.waitingForKey) config?.size ?: 0 else 0) > MAX_QUEUE_BYTES) {
             resetLocked()
         }
-        if (waitingForKey) {
-            if (!key || config == null) {
+        if (syncGate.waitingForKey) {
+            if (!syncGate.accept(key, config != null)) {
                 progress = progress.copy(droppedFrames = progress.droppedFrames + 1)
                 return@synchronized
             }
-            queue.addLast(PendingUnit(config!!.copyOf(), ptsUs, M3Wire.CONFIG, now, generation))
-            queueBytes += config!!.size
-            waitingForKey = false
+            queue.add(PendingUnit(config!!.copyOf(), ptsUs, M3Wire.CONFIG, now, generation))
         }
-        queue.addLast(PendingUnit(bytes, ptsUs, if (key) M3Wire.KEY else M3Wire.NORMAL, now, generation))
-        queueBytes += bytes.size
+        queue.add(PendingUnit(bytes, ptsUs, if (key) M3Wire.KEY else M3Wire.NORMAL, now, generation))
         progress = progress.copy(queuedFrames = progress.queuedFrames + 1,
             depth = queue.size, highWater = maxOf(progress.highWater, queue.size),
             keyframes = progress.keyframes + if (key) 1 else 0)
         lock.notifyAll()
     }
 
-    private fun resetLocked(closeVideo: Boolean = true) {
+    private fun resetLocked(closeVideo: Boolean = true, requestKeyFrame: Boolean = true) {
         progress = progress.copy(resets = progress.resets + 1,
-            droppedFrames = progress.droppedFrames + queue.count { it.flag != M3Wire.CONFIG }, depth = 0)
-        queue.clear(); queueBytes = 0; waitingForKey = true
+            droppedFrames = progress.droppedFrames + queue.clear(), depth = 0)
+        syncGate.reset()
         if (closeVideo) runCatching { videoSocket?.close() }
-        requestSyncFrame()
+        if (requestKeyFrame) requestSyncFrame()
         lock.notifyAll()
     }
 
     private fun run() {
-        var retries = 0
-        while (!stopping && retries < MAX_RETRIES) {
+        val recovery = RecoveryState()
+        while (!stopping) {
             try {
-                progress = progress.copy(state = if (retries == 0) "Connecting" else "Recovering",
-                    reconnectAttempts = progress.reconnectAttempts + 1)
+                recovery.attempting()
+                progress = progress.copy(state = if (recovery.connectionAttempts == 1L) "Connecting" else "Recovering",
+                    connectionAttempts = recovery.connectionAttempts)
                 val control = connect(CONTROL_PORT)
                 controlSocket = control
                 progress = progress.copy(state = "Authenticating")
@@ -124,72 +123,82 @@ class NetworkSender(
                     throw IllegalStateException("Capability negotiation rejected: $welcome")
                 val id = M3Wire.hex16(welcome.getString("session"))
                 progress = progress.copy(state = "Negotiating")
-                val reader = Thread({ readControl(control) }, "camylla-control-reader").apply { isDaemon = true; start() }
-                var videoFailures = 0
-                while (!stopping && !control.isClosed) {
-                    try {
-                        progress = progress.copy(reconnectAttempts = progress.reconnectAttempts + 1)
-                        val video = connect(VIDEO_PORT)
-                        videoSocket = video
-                        val bind = JSONObject().put("type", "bind").put("version", M3Wire.VERSION)
-                            .put("session", welcome.getString("session")).put("secret", secret)
-                        M3Wire.writeControl(video.outputStream, bind.toString())
-                        val ready = JSONObject(M3Wire.readControl(video.inputStream))
-                        if (ready.optString("type") != "ready" || ready.optString("session") != welcome.getString("session"))
-                            throw IllegalStateException("Video channel binding rejected")
-                        videoFailures = 0
-                        synchronized(lock) { resetLocked(closeVideo = false) }
-                        progress = progress.copy(state = "Streaming")
-                        while (!stopping && !video.isClosed && !control.isClosed) {
-                            val unit = synchronized(lock) {
-                                while (queue.isEmpty() && !stopping && !video.isClosed && !control.isClosed) lock.wait(200)
-                                if (queue.isEmpty()) null else queue.removeFirst().also {
-                                    queueBytes -= it.payload.size
-                                    progress = progress.copy(depth = queue.size)
-                                }
-                            } ?: continue
-                            if (SystemClock.elapsedRealtimeNanos() - unit.queuedNs > MAX_AGE_NS) {
-                                synchronized(lock) { resetLocked() }
-                                continue
-                            }
-                            val next = ++sequence
-                            val sendUs = SystemClock.elapsedRealtimeNanos() / 1000
-                            val packet = M3Wire.video(next, unit.generation, unit.ptsUs, sendUs, id, unit.flag, unit.payload)
-                            video.outputStream.write(packet)
-                            progress = progress.copy(sentFrames = progress.sentFrames + if (unit.flag == M3Wire.CONFIG) 0 else 1,
-                                sentBytes = progress.sentBytes + packet.size, lastSequence = next)
+                val lastPong = java.util.concurrent.atomic.AtomicLong(SystemClock.elapsedRealtime())
+                Thread({ readControl(control, lastPong) }, "camylla-control-reader").apply { isDaemon = true; start() }
+                Thread({ heartbeat(control, lastPong) }, "camylla-control-heartbeat").apply { isDaemon = true; start() }
+                if (control.isClosed) throw java.io.IOException("Control session closed")
+                val video = connect(VIDEO_PORT)
+                videoSocket = video
+                val bind = JSONObject().put("type", "bind").put("version", M3Wire.VERSION)
+                    .put("session", welcome.getString("session")).put("secret", secret)
+                M3Wire.writeControl(video.outputStream, bind.toString())
+                val ready = JSONObject(M3Wire.readControl(video.inputStream))
+                if (ready.optString("type") != "ready" || ready.optString("session") != welcome.getString("session"))
+                    throw IllegalStateException("Video channel binding rejected")
+                if (control.isClosed) throw java.io.IOException("Control session closed")
+                synchronized(lock) { resetLocked(closeVideo = false) }
+                recovery.streaming()
+                progress = progress.copy(state = "Streaming", consecutiveFailures = 0,
+                    successfulRecoveries = recovery.successfulRecoveries)
+                while (!stopping && !video.isClosed && !control.isClosed) {
+                    val unit = synchronized(lock) {
+                        while (queue.isEmpty && !stopping && !video.isClosed && !control.isClosed) lock.wait(200)
+                        if (queue.isEmpty) null else queue.remove().also {
+                            progress = progress.copy(depth = queue.size)
                         }
-                    } catch (error: Exception) {
-                        if (!stopping) reportError("Video: ${error.message}")
-                        videoFailures++
-                        if (videoFailures >= MAX_RETRIES) throw IllegalStateException("Video retry limit reached", error)
-                    } finally {
-                        runCatching { videoSocket?.close() }; videoSocket = null
-                        synchronized(lock) { queue.clear(); queueBytes = 0; waitingForKey = true; progress = progress.copy(depth = 0) }
-                        if (!stopping) progress = progress.copy(state = "Recovering")
+                    } ?: continue
+                    if (SystemClock.elapsedRealtimeNanos() - unit.queuedNs > MAX_AGE_NS) {
+                        synchronized(lock) { resetLocked() }
+                        continue
                     }
-                    if (!stopping && !control.isClosed) Thread.sleep(RETRY_DELAY_MS)
+                    val next = ++sequence
+                    val sendUs = SystemClock.elapsedRealtimeNanos() / 1000
+                    val packet = M3Wire.video(next, unit.generation, unit.ptsUs, sendUs, id, unit.flag, unit.payload)
+                    video.outputStream.write(packet)
+                    progress = progress.copy(sentFrames = progress.sentFrames + if (unit.flag == M3Wire.CONFIG) 0 else 1,
+                        sentBytes = progress.sentBytes + packet.size, lastSequence = next)
                 }
+                if (!stopping) throw java.io.IOException("Control or video channel closed")
             } catch (error: Exception) {
-                if (!stopping) reportError("Control: ${error.message}")
+                if (!stopping) reportError("Transport: ${error.message}")
             } finally {
+                // A channel failure invalidates the entire logical session.
                 runCatching { videoSocket?.close() }; videoSocket = null
                 runCatching { controlSocket?.close() }; controlSocket = null
-                synchronized(lock) { queue.clear(); queueBytes = 0; waitingForKey = true; progress = progress.copy(depth = 0) }
+                synchronized(lock) { resetLocked(closeVideo = false, requestKeyFrame = false) }
             }
-            retries++
-            if (!stopping) Thread.sleep(RETRY_DELAY_MS)
+            if (!stopping) {
+                val delay = recovery.failed()
+                progress = progress.copy(state = "Recovering", consecutiveFailures = recovery.consecutiveFailures)
+                if (!stopping) retryWaiter.waitFor(delay)
+            }
         }
-        progress = progress.copy(state = if (stopping) "Stopping" else "Error")
+        progress = progress.copy(state = "Stopping")
     }
 
-    private fun readControl(control: SSLSocket) {
+    private fun heartbeat(control: SSLSocket, lastPong: java.util.concurrent.atomic.AtomicLong) {
+        try {
+            while (!stopping && !control.isClosed && controlSocket === control) {
+                synchronized(lock) { if (!stopping && !control.isClosed) lock.wait(HEARTBEAT_MS) }
+                if (stopping || control.isClosed || controlSocket !== control) break
+                if (SystemClock.elapsedRealtime() - lastPong.get() > HEARTBEAT_TIMEOUT_MS)
+                    throw java.io.IOException("Control heartbeat timed out")
+                M3Wire.writeControl(control.outputStream, "{\"type\":\"ping\"}")
+            }
+        } catch (error: Exception) {
+            if (!stopping && controlSocket === control) reportError("Control heartbeat: ${error.message}")
+            runCatching { control.close() }
+            if (controlSocket === control) runCatching { videoSocket?.close() }
+        }
+    }
+
+    private fun readControl(control: SSLSocket, lastPong: java.util.concurrent.atomic.AtomicLong) {
         try {
             while (!stopping && !control.isClosed) {
                 val message = JSONObject(M3Wire.readControl(control.inputStream))
                 when (message.optString("type")) {
                     "sync" -> synchronized(lock) { resetLocked(closeVideo = false) }
-                    "pong" -> Unit
+                    "pong" -> lastPong.set(SystemClock.elapsedRealtime())
                     "error" -> throw IllegalStateException(message.optString("message", "Receiver error"))
                     else -> throw IllegalStateException("Unknown control message")
                 }
@@ -197,12 +206,13 @@ class NetworkSender(
         } catch (error: Exception) {
             if (!stopping) reportError("Control read: ${error.message}")
             runCatching { control.close() }
-            runCatching { videoSocket?.close() }
+            if (controlSocket === control) runCatching { videoSocket?.close() }
         }
     }
 
     private fun connect(port: Int): SSLSocket {
         val plain = Socket()
+        connectingSocket = plain
         try {
             plain.tcpNoDelay = true
             plain.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
@@ -210,9 +220,10 @@ class NetworkSender(
             socket.enabledProtocols = socket.supportedProtocols.filter { it == "TLSv1.2" || it == "TLSv1.3" }.toTypedArray()
             socket.soTimeout = CONNECT_TIMEOUT_MS
             socket.startHandshake()
-            socket.soTimeout = 0
+            socket.soTimeout = HEARTBEAT_TIMEOUT_MS.toInt()
             return socket
         } catch (error: Exception) { plain.close(); throw error }
+        finally { if (connectingSocket === plain) connectingSocket = null }
     }
 
     private fun reportError(message: String) {
@@ -222,7 +233,9 @@ class NetworkSender(
 
     override fun close() {
         stopping = true
-        synchronized(lock) { queue.clear(); queueBytes = 0; lock.notifyAll() }
+        retryWaiter.cancel()
+        synchronized(lock) { queue.clear(); lock.notifyAll() }
+        runCatching { connectingSocket?.close() }
         runCatching { videoSocket?.close() }
         runCatching { controlSocket?.close() }
         worker.join(2000)
@@ -244,8 +257,8 @@ class NetworkSender(
         private const val CONTROL_PORT = 58413
         private const val VIDEO_PORT = 58414
         private const val CONNECT_TIMEOUT_MS = 1500
-        private const val RETRY_DELAY_MS = 250L
-        private const val MAX_RETRIES = 20
+        private const val HEARTBEAT_MS = 2_000L
+        private const val HEARTBEAT_TIMEOUT_MS = 7_000L
         private const val MAX_DEPTH = 4
         private const val MAX_QUEUE_BYTES = 8 * 1024 * 1024
         private const val MAX_AGE_NS = 250_000_000L
