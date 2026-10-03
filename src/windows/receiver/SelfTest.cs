@@ -268,6 +268,22 @@ internal static class SelfTest
             Check(copy.Pixels[0] == 99, "borrowed NV12 copied before callback returns");
         }
         finally { Marshal.FreeHGlobal(native); }
+        var padded = new byte[24]; // 4x2 visible, 4x4 stored: UV starts after padded luma.
+        for (var i = 0; i < 8; i++) padded[i] = (byte)(10 + i);
+        padded.AsSpan(8, 8).Fill(200);
+        for (var i = 0; i < 4; i++) padded[16 + i] = (byte)(100 + i);
+        var paddedNative = Marshal.AllocHGlobal(padded.Length);
+        try
+        {
+            Marshal.Copy(padded, 0, paddedNative, padded.Length);
+            using var compact = OwnedNv12Frame.CopyFromBorrowed(paddedNative, 24, 4, 2, 4, 0, 0);
+            Check(compact.Pixels.SequenceEqual(new byte[] {
+                10, 11, 12, 13, 14, 15, 16, 17, 100, 101, 102, 103 }),
+                "padded NV12 luma rows excluded and chroma copied from stored plane offset");
+            RejectFrame(() => OwnedNv12Frame.CopyFromBorrowed(paddedNative, 21, 4, 2, 4, 0, 0),
+                "invalid padded NV12 byte length");
+        }
+        finally { Marshal.FreeHGlobal(paddedNative); }
         var queue = new LatestFrameStore();
         queue.Publish(first);
         using (var replacement = OwnedNv12Frame.CopyFromManaged(source, 4, 2, 4, 300, 400))

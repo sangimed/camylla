@@ -1,0 +1,13 @@
+AUD boundaries=347
+AU=30 decoded=30 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=60 decoded=60 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=90 decoded=90 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=120 decoded=120 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=150 decoded=150 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=180 decoded=180 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=210 decoded=210 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=240 decoded=240 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=270 decoded=270 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=300 decoded=300 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=330 decoded=330 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400
+AU=347 decoded=347 rejected=0 width=1920 height=1080 stride=1920 bytes=3133440 expected=3110400

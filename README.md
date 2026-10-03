@@ -45,7 +45,7 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 - [Windows virtual-camera POC](docs/windows-virtual-camera-poc.md): prerequisites, build, registration, smoke test, removal, troubleshooting, architecture, and M1 evidence limits.
 - [Android M2 S21 Ultra result](docs/validation/android-m2-s21-ultra.md): physical producer evidence and remaining coverage limits.
 - [M3 Android-to-Windows validation](docs/validation/android-windows-m3.md): physical 720p30 decode and recovery evidence, including the initial failed Wi-Fi attempt.
-- [M4.1 Windows preview validation](docs/validation/android-windows-m4-1.md): desktop build and local checks; physical S21 Ultra preview test remains pending.
+- [M4.1 Windows preview validation](docs/validation/android-windows-m4-1.md): physical S21 Ultra preview, measured cadence/memory, recovery, lifecycle, and CLI regression results.
 
 ## Build and test
 

@@ -1,0 +1,2 @@
+Loopback TLS bound; mismatched channel rejected; sent 90 synthetic access units plus a sequence-gap recovery point
+Stale control session retired; fresh authenticated control/video session bound
