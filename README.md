@@ -2,7 +2,7 @@
 
 Camylla aims to turn an Android phone into a webcam for Windows video meetings, with a standalone desktop app and a local Wi-Fi connection.
 
-**Status: early implementation.** M1 Windows virtual-camera and M2 S21 Ultra CameraX/MediaCodec feasibility proofs are recorded. M3 contains an initial authenticated Android-to-Windows transport and diagnostic receiver; physical end-to-end decode and recovery validation remain pending. There is no polished desktop application, installer, or release.
+**Status: early implementation.** M1 Windows virtual-camera, M2 S21 Ultra CameraX/MediaCodec, and M3 physical authenticated transport/decode feasibility proofs are recorded. M4 product alpha is current. There is no polished desktop application, installer, or release.
 
 ## Planned experience
 
@@ -44,7 +44,7 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 - [M3 transport protocol v2](docs/protocol-v2.md): authenticated session binding, negotiation, framing, limits, and recovery.
 - [Windows virtual-camera POC](docs/windows-virtual-camera-poc.md): prerequisites, build, registration, smoke test, removal, troubleshooting, architecture, and M1 evidence limits.
 - [Android M2 S21 Ultra result](docs/validation/android-m2-s21-ultra.md): physical producer evidence and remaining coverage limits.
-- [M3 Android-to-Windows validation](docs/validation/android-windows-m3.md): receiver setup, acceptance steps, and pending physical results.
+- [M3 Android-to-Windows validation](docs/validation/android-windows-m3.md): physical 720p30 decode and recovery evidence, including the initial failed Wi-Fi attempt.
 
 ## Build and test
 
@@ -62,7 +62,7 @@ ctest --test-dir build --output-on-failure
 
 ## Roadmap
 
-The current focus is **M3: secure end-to-end transport**. Track physical validation in [issue #16](https://github.com/sangimed/camylla/issues/16) and see [ROADMAP.md](ROADMAP.md) for milestone status and the planned path to v1.0.
+The current focus is **M4: product alpha**. Track it in [issue #20](https://github.com/sangimed/camylla/issues/20) and see [ROADMAP.md](ROADMAP.md) for milestone status and the planned path to v1.0.
 
 The detailed technical gates and exit criteria remain in the [living design](docs/design.md#21-milestones-from-proof-of-concept-to-v10). Dates are deliberately unset.
 

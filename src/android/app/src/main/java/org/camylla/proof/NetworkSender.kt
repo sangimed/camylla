@@ -22,6 +22,11 @@ data class NetworkProgress(
     val successfulRecoveries: Long = 0, val lastSequence: Long = 0, val error: String = "",
 )
 
+internal fun NetworkProgress.streamed(recoveries: Long) = copy(
+    state = "Streaming", consecutiveFailures = 0,
+    successfulRecoveries = recoveries, error = "",
+)
+
 /** One explicit phone-started session. Socket work is confined to worker/control threads. */
 class NetworkSender(
     private val host: String, pinHex: String, private val secret: String,
@@ -47,6 +52,7 @@ class NetworkSender(
     private var config: ByteArray? = null
     private var generation = 0
     private val syncGate = SyncGate()
+    private val transportGate = VideoTransportGate()
     private var sequence = 0L
 
     init {
@@ -60,19 +66,27 @@ class NetworkSender(
     fun newEncoder() = synchronized(lock) {
         generation++
         config = null
-        resetLocked()
+        if (transportGate.isReady) resetLocked() else syncGate.reset()
     }
 
     fun codecConfig(bytes: ByteArray) = synchronized(lock) {
         if (bytes.isNotEmpty() && bytes.size <= M3Wire.MAX_VIDEO_BYTES) {
             val changed = config != null && !config!!.contentEquals(bytes)
             config = bytes.copyOf()
-            if (changed) { generation++; resetLocked() }
+            if (changed) {
+                generation++
+                if (transportGate.isReady) resetLocked() else syncGate.reset()
+            }
         }
     }
 
     fun offer(bytes: ByteArray, ptsUs: Long, key: Boolean) = synchronized(lock) {
         if (stopping) return@synchronized
+        // Keep draining MediaCodec during an outage without building a doomed video queue.
+        if (!transportGate.isReady) {
+            progress = progress.copy(droppedFrames = progress.droppedFrames + 1)
+            return@synchronized
+        }
         if (bytes.isEmpty() || bytes.size > M3Wire.MAX_VIDEO_BYTES) { resetLocked(); return@synchronized }
         val now = SystemClock.elapsedRealtimeNanos()
         if (!queue.isEmpty && now - queue.first.queuedNs > MAX_AGE_NS ||
@@ -84,9 +98,9 @@ class NetworkSender(
                 progress = progress.copy(droppedFrames = progress.droppedFrames + 1)
                 return@synchronized
             }
-            queue.add(PendingUnit(config!!.copyOf(), ptsUs, M3Wire.CONFIG, now, generation))
+            transportGate.enqueue(queue, PendingUnit(config!!.copyOf(), ptsUs, M3Wire.CONFIG, now, generation))
         }
-        queue.add(PendingUnit(bytes, ptsUs, if (key) M3Wire.KEY else M3Wire.NORMAL, now, generation))
+        transportGate.enqueue(queue, PendingUnit(bytes, ptsUs, if (key) M3Wire.KEY else M3Wire.NORMAL, now, generation))
         progress = progress.copy(queuedFrames = progress.queuedFrames + 1,
             depth = queue.size, highWater = maxOf(progress.highWater, queue.size),
             keyframes = progress.keyframes + if (key) 1 else 0)
@@ -97,8 +111,12 @@ class NetworkSender(
         progress = progress.copy(resets = progress.resets + 1,
             droppedFrames = progress.droppedFrames + queue.clear(), depth = 0)
         syncGate.reset()
-        if (closeVideo) runCatching { videoSocket?.close() }
-        if (requestKeyFrame) requestSyncFrame()
+        if (closeVideo) {
+            transportGate.unavailable()
+            runCatching { videoSocket?.close() }
+        }
+        // A closed channel cannot use a sync frame. The next ready bind requests one.
+        if (requestKeyFrame && transportGate.isReady) requestSyncFrame()
         lock.notifyAll()
     }
 
@@ -148,10 +166,12 @@ class NetworkSender(
                 if (ready.optString("type") != "ready" || ready.optString("session") != welcome.getString("session"))
                     throw IllegalStateException("Video channel binding rejected")
                 if (control.isClosed) throw java.io.IOException("Control session closed")
-                synchronized(lock) { resetLocked(closeVideo = false) }
+                synchronized(lock) {
+                    resetLocked(closeVideo = false, requestKeyFrame = false)
+                    transportGate.ready(requestSyncFrame)
+                }
                 recovery.streaming()
-                progress = progress.copy(state = "Streaming", consecutiveFailures = 0,
-                    successfulRecoveries = recovery.successfulRecoveries)
+                progress = progress.streamed(recovery.successfulRecoveries)
                 while (!stopping && !video.isClosed && !control.isClosed) {
                     val unit = synchronized(lock) {
                         while (queue.isEmpty && !stopping && !video.isClosed && !control.isClosed) lock.wait(200)
@@ -180,7 +200,12 @@ class NetworkSender(
                 runCatching { videoSocket?.close() }; videoSocket = null
                 runCatching { controlSocket?.close() }; controlSocket = null
                 heartbeatThread?.join(500)
-                synchronized(lock) { resetLocked(closeVideo = false, requestKeyFrame = false) }
+                synchronized(lock) {
+                    if (transportGate.isReady) {
+                        transportGate.unavailable()
+                        resetLocked(closeVideo = false, requestKeyFrame = false)
+                    }
+                }
             }
             if (!stopping) {
                 val delay = recovery.failed()
@@ -214,7 +239,7 @@ class NetworkSender(
                 }
             }
         } catch (error: Exception) {
-            if (!stopping) reportError("Control read: ${error.message}")
+            if (!stopping && controlSocket === control) reportError("Control read: ${error.message}")
             runCatching { control.close() }
             if (controlSocket === control) runCatching { videoSocket?.close() }
         } finally {

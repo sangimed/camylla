@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
@@ -19,6 +20,7 @@ internal static class Program
     private static long received, keyframes, decoded, decoderErrors, networkErrors, decoderResets, reconnects;
     private static ulong lastSequence, lastPts, lastAndroidSendUs;
     private static long lastReceiveTicks, lastDecodeTicks;
+    private static long lastPushReceiveToDecodeTicks;
     private static uint lastDecodedWidth, lastDecodedHeight, lastDecodedStride;
 
     private static async Task Main(string[] args)
@@ -250,6 +252,8 @@ internal static class Program
                     if (decodedNow > 0)
                     {
                         lastDecodeTicks = decoder.LastDecodedTicks;
+                        Interlocked.Exchange(ref lastPushReceiveToDecodeTicks,
+                            lastDecodeTicks - lastReceiveTicks);
                         lastDecodedWidth = decoder.LastDecodedWidth;
                         lastDecodedHeight = decoder.LastDecodedHeight;
                         lastDecodedStride = decoder.LastDecodedStride;
@@ -290,6 +294,7 @@ internal static class Program
                 $"decoderResets={Interlocked.Read(ref decoderResets)} videoConnections={Interlocked.Read(ref reconnects)} " +
                 $"lastSeq={lastSequence} lastPtsUs={lastPts} androidSendUs={lastAndroidSendUs} " +
                 $"receiveTicks={lastReceiveTicks} decodedFrameTicks={lastDecodeTicks} " +
+                $"lastPushReceiveToDecodeMs={Stopwatch.GetElapsedTime(0, Interlocked.Read(ref lastPushReceiveToDecodeTicks)).TotalMilliseconds:F2} " +
                 $"nv12={lastDecodedWidth}x{lastDecodedHeight}/stride{lastDecodedStride} " +
                 "queueDepth=0 queueHighWater=1");
         }

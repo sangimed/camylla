@@ -6,14 +6,12 @@ Detailed, executable work belongs in [GitHub Issues](https://github.com/sangimed
 
 ## Current focus
 
-### M3 — Secure end-to-end transport
+### M4 — Product alpha
 
 **Status:** current  
-**Tracking:** [#16 — M3: implement secure Android-to-Windows H.264 transport](https://github.com/sangimed/camylla/issues/16)
+**Tracking:** [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues/20)
 
-M1 established that the selected Windows 11 Media Foundation software-camera direction is viable: the development camera registers, activates through Windows Frame Server, delivers deterministic NV12 frames to real consumers, supports the baseline 720p30 and 1080p30 modes, survives repeated consumer open/close cycles, and removes cleanly through the development control tool.
-
-M2 validated CameraX-first capture into a MediaCodec H.264 encoder surface on the physical Samsung Galaxy S21 Ultra. The CameraX-first / MediaCodec direction survived that proof. M3 now targets authenticated TLS/TCP transport from that phone to a Windows Media Foundation decoder, with bounded freshness and recovery. Physical end-to-end evidence is still required before M3 can complete.
+M1 established the Windows Media Foundation virtual-camera path, M2 validated physical S21 Ultra CameraX/MediaCodec capture, and M3 validated authenticated H.264 transport to continuous Windows NV12 decoding at approximately 30 FPS. Receiver restart and phone Wi-Fi interruption recovered, with bounded queues. M4 now builds the focused desktop preview, pairing, controls, settings, and virtual-camera integration from those seams. Exact end-to-end latency and broad compatibility remain later measured gates.
 
 ## Milestones
 
@@ -63,22 +61,26 @@ The physical evidence and limits of this feasibility result are preserved in [th
 
 ### M3 — Secure end-to-end transport
 
-**Status:** current
+**Status:** complete
 
 Tracking: [#16 — M3: implement secure Android-to-Windows H.264 transport](https://github.com/sangimed/camylla/issues/16).
 
-- [ ] Complete the versioned protocol beyond video framing.
-- [ ] Define capability negotiation and selected-mode semantics.
-- [ ] Define control messages, acknowledgements, errors, and reset/reconnect behavior.
-- [ ] Specify and review pairing, remembered trust, revocation, and key rotation.
-- [ ] Bind video and control connections to the same authenticated session.
-- [ ] Implement the initial TLS/TCP pipeline.
-- [ ] Measure latency, backlog behavior, and recovery under network impairment.
-- [ ] Keep TLS/TCP only if it passes the project gates; otherwise revisit the transport ADR.
+- [x] Complete the bounded versioned protocol beyond video framing.
+- [x] Define capability negotiation and selected-mode semantics.
+- [x] Define control messages, responses, errors, and reset/reconnect behavior.
+- [x] Specify the production direction for explicit pairing, remembered trust, revocation, and rotation; defer UX and concrete credential protocol to M4.
+- [x] Bind video and control connections to the same authenticated session.
+- [x] Implement the initial authenticated TLS/TCP pipeline.
+- [x] Record healthy-LAN cadence, bounded backlog, receiver-restart and Wi-Fi recovery; expose same-clock receive-to-decode timing. Exact cross-device latency and recovery duration were not recorded.
+- [x] Accept TLS/TCP for continued development against the available M3 evidence.
+
+The [physical M3 record](docs/validation/android-windows-m3.md) preserves the first failed Wi-Fi attempt, PR #18/#19 corrections, and successful retest. Rear 720p30 received about 150 access units per five seconds with continuous NV12 decode, zero recorded decoder errors/resets, Windows queue high-water one, and Android post-recovery high-water three. This accepts the M3 feasibility direction without claiming the later camera-to-consumer latency or release stability gates. Development pin/secret entry remains a proof bootstrap.
 
 ### M4 — Product alpha
 
-**Status:** planned
+**Status:** current
+
+Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues/20).
 
 - [ ] Build the focused Windows setup and preview experience.
 - [ ] Add camera/mode controls and persistent settings.
