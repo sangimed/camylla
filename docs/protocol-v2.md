@@ -5,7 +5,10 @@ Status: M3 implementation proof with physical Android-to-Windows validation in
 extends the portable `CMYV` framing from [v1](protocol-v1.md); v1 remains historical
 and is rejected by the v2 receiver. All connections are TLS/TCP. The Windows user
 process owns both listeners, session state and decoding. The virtual-camera DLL has
-no network responsibilities.
+no network responsibilities. This is the implemented **development** protocol;
+the proposed [v3 production pairing and session specification](pairing-protocol-v3.md)
+has separate identities and is not yet implemented. v2 peers must never be
+automatically upgraded into production trust.
 
 ## Development authentication
 
