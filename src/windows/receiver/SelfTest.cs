@@ -5,6 +5,7 @@ using System.Text;
 using System.Runtime.InteropServices;
 using System.Net;
 using System.Net.Sockets;
+using System.IO.Pipes;
 
 namespace Camylla.Receiver;
 
@@ -73,6 +74,7 @@ internal static class SelfTest
     {
         TestOwnedLatestFrames();
         TestNv12Conversion();
+        await TestCameraPipeAsync();
         await TestReceiverLifecycleAsync();
         var frame = new byte[Wire.VideoHeaderSize + 4];
         "CMYV"u8.CopyTo(frame);
@@ -108,6 +110,59 @@ internal static class SelfTest
         try { Wire.RequireBoundSession("AA", "BB"); throw new Exception("Self-test failed: mismatched session"); }
         catch (System.Security.Authentication.AuthenticationException) { }
         Console.WriteLine("Receiver wire self-test passed");
+    }
+
+    private static async Task TestCameraPipeAsync()
+    {
+        using var host = new ReceiverHost();
+        var streaming = 1;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var header = new byte[CameraPipePublisher.HeaderBytes];
+        await using (var publisher = new CameraPipePublisher(host, () =>
+            (Volatile.Read(ref streaming) == 1, "synthetic-session")))
+        {
+        publisher.Start();
+        using var client = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await client.ConnectAsync(timeout.Token);
+        await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await client.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 0, "camera pipe starts neutral");
+        var pixels = new byte[1280 * 720 * 3 / 2];
+        using (var frame = OwnedNv12Frame.CopyFromManaged(pixels, 1280, 720, 1280, 123,
+                   Stopwatch.GetTimestamp())) host.PublishFrame(frame);
+        await Task.Delay(50, timeout.Token);
+        await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await client.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 1 && BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(20)) == pixels.Length,
+            "camera pipe publishes complete live NV12");
+        var received = new byte[pixels.Length];
+        await client.ReadExactlyAsync(received, timeout.Token);
+        Check(received.AsSpan().SequenceEqual(pixels), "camera pipe preserves NV12 bytes");
+        Volatile.Write(ref streaming, 0);
+        await Task.Delay(50, timeout.Token);
+        await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await client.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 0, "camera pipe turns neutral on Stop");
+        client.Dispose();
+        using var reopened = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await reopened.ConnectAsync(timeout.Token);
+        await reopened.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await reopened.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 0, "reopened consumer remains neutral without capture");
+        reopened.Dispose();
+        }
+        await using (var restarted = new CameraPipePublisher(host, () => (false, "none")))
+        {
+            restarted.Start();
+            using var afterRestart = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+                PipeDirection.InOut, PipeOptions.Asynchronous);
+            await afterRestart.ConnectAsync(timeout.Token);
+            await afterRestart.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+            await afterRestart.ReadExactlyAsync(header, timeout.Token);
+            Check(header[6] == 0, "publisher restart returns neutral and accepts new consumer");
+        }
     }
 
     private static void TestNv12Conversion()

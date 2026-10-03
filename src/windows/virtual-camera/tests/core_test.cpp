@@ -1,8 +1,10 @@
 #include "camylla/virtual_camera/cadence.h"
+#include "camylla/virtual_camera/ipc_protocol.h"
 #include "camylla/virtual_camera/synthetic_frame_provider.h"
 #include "camylla/virtual_camera/video_mode.h"
 
 #include <cstdlib>
+#include <array>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
@@ -51,11 +53,58 @@ void ChecksSyntheticFramesAreDeterministicAndComplete() {
     Check(first.timestamp_100ns == FrameCadence(30).TimestampFor(7), "timestamp follows source cadence");
 }
 
+void Put32(std::array<std::uint8_t, camylla::virtual_camera::kIpcHeaderBytes>& bytes,
+           std::size_t offset, std::uint32_t value) {
+    for (int i = 0; i < 4; ++i) bytes[offset + i] = static_cast<std::uint8_t>(value >> (8 * i));
+}
+
+void Put64(std::array<std::uint8_t, camylla::virtual_camera::kIpcHeaderBytes>& bytes,
+           std::size_t offset, std::uint64_t value) {
+    Put32(bytes, offset, static_cast<std::uint32_t>(value));
+    Put32(bytes, offset + 4, static_cast<std::uint32_t>(value >> 32));
+}
+
+void ChecksIpcFrameBoundsAndFreshness() {
+    using namespace camylla::virtual_camera;
+    std::array<std::uint8_t, kIpcHeaderBytes> bytes{};
+    bytes[0] = 'C'; bytes[1] = 'M'; bytes[2] = 'Y'; bytes[3] = 'F';
+    bytes[4] = 1; bytes[6] = 1;
+    bytes[24] = 1;
+    Put64(bytes, 40, 1);
+    Put64(bytes, 56, 1000);
+    IpcFrameHeader parsed{};
+    for (const auto mode : SupportedModes()) {
+        Put32(bytes, 8, mode.width); Put32(bytes, 12, mode.height);
+        Put32(bytes, 16, mode.width);
+        Put32(bytes, 20, static_cast<std::uint32_t>(Nv12FrameSize(mode)));
+        Check(ParseIpcHeader(bytes, 1000, parsed) && parsed.live, "supported live frame accepted");
+        Check(!ParseIpcHeader(bytes, 1600, parsed), "expired frame rejected");
+        Check(!ParseIpcHeader(bytes, 900, parsed), "future timestamp rejected");
+        Put32(bytes, 20, kMaxIpcFrameBytes + 1);
+        Check(!ParseIpcHeader(bytes, 1000, parsed), "oversized frame rejected");
+        Put32(bytes, 16, 4096);
+        Put32(bytes, 20, 4096 * mode.height * 3 / 2);
+        Check(ParseIpcHeader(bytes, 1000, parsed), "bounded padded NV12 stride accepted");
+    }
+    Put32(bytes, 8, 1280); Put32(bytes, 12, 720); Put32(bytes, 16, 1280);
+    Put32(bytes, 20, 1'382'400);
+    bytes[4] = 2;
+    Check(!ParseIpcHeader(bytes, 1000, parsed), "unknown version rejected");
+    bytes[4] = 1;
+    Put32(bytes, 16, 1279);
+    Check(!ParseIpcHeader(bytes, 1000, parsed), "invalid stride rejected");
+    bytes[6] = 0;
+    Check(ParseIpcHeader(bytes, 1000, parsed) && !parsed.live, "neutral response accepted");
+    bytes[64] = 1;
+    Check(!ParseIpcHeader(bytes, 1000, parsed), "reserved bytes must be zero");
+}
+
 }  // namespace
 
 int main() {
     ChecksModeAndLayout();
     ChecksCadenceWithoutLongTermDrift();
     ChecksSyntheticFramesAreDeterministicAndComplete();
+    ChecksIpcFrameBoundsAndFreshness();
     return EXIT_SUCCESS;
 }

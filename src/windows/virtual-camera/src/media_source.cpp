@@ -1,6 +1,7 @@
 #include "media_source.h"
 
 #include "camylla/virtual_camera/cadence.h"
+#include "camylla/virtual_camera/ipc_frame_provider.h"
 #include "camylla/virtual_camera/synthetic_frame_provider.h"
 #include "camylla/virtual_camera/video_mode.h"
 
@@ -11,6 +12,7 @@
 #include <ksmedia.h>
 #include <ksproxy.h>
 #include <wrl/client.h>
+#include <sddl.h>
 
 #include <chrono>
 #include <algorithm>
@@ -19,6 +21,7 @@
 #include <thread>
 #include <atomic>
 #include <cwchar>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::RuntimeClass;
@@ -31,6 +34,26 @@ namespace camylla::virtual_camera::win {
 const CLSID kSourceClsid = {0xca9f0b23, 0xc7e0, 0x42c7, {0x94, 0xb4, 0x2d, 0x6a, 0x5f, 0xad, 0x54, 0x4d}};
 
 namespace {
+
+void ReportSourceToken() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return;
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<std::uint8_t> data(size);
+    if (size != 0 && GetTokenInformation(token, TokenUser, data.data(), size, &size)) {
+        const auto* user = reinterpret_cast<const TOKEN_USER*>(data.data());
+        LPWSTR sid = nullptr;
+        if (ConvertSidToStringSidW(user->User.Sid, &sid)) {
+            wchar_t message[256]{};
+            swprintf_s(message, L"Camylla camera: source pid=%lu token user SID=%ls\n",
+                       GetCurrentProcessId(), sid);
+            OutputDebugStringW(message);
+            LocalFree(sid);
+        }
+    }
+    CloseHandle(token);
+}
 
 enum class SourceState { stopped, started, shutdown };
 
@@ -109,7 +132,7 @@ private:
     ComPtr<IMFVideoSampleAllocator> allocator_;
     std::atomic<std::uint64_t> requests_{0};
     std::atomic<std::uint64_t> delivered_{0};
-    std::unique_ptr<SyntheticFrameProvider> provider_;
+    std::shared_ptr<FrameProvider> provider_;
     VideoMode mode_{};
     std::uint64_t frame_index_{};
     bool started_{};
@@ -215,6 +238,7 @@ private:
 
 HRESULT CamyllaMediaStream::Initialize(CamyllaMediaSource* parent, DWORD stream_id,
                                        IMFStreamDescriptor* descriptor) {
+    ReportSourceToken();
     if (parent == nullptr || descriptor == nullptr) return E_POINTER;
     HRESULT hr = MFCreateEventQueue(&events_);
     if (FAILED(hr)) return hr;
@@ -243,7 +267,11 @@ HRESULT CamyllaMediaStream::Start(IMFMediaType* type) {
     if (!allocator_) return MF_E_NOT_INITIALIZED;
     if (FAILED(hr = allocator_->InitializeSampleAllocator(10, type))) return hr;
     mode_ = mode;
-    provider_ = std::make_unique<SyntheticFrameProvider>(mode);
+    // An explicit diagnostic switch preserves M1's deterministic offline path.
+    wchar_t offline[2]{};
+    provider_ = GetEnvironmentVariableW(L"CAMYLLA_SYNTHETIC", offline, 2) == 1 && offline[0] == L'1'
+                    ? std::static_pointer_cast<FrameProvider>(std::make_shared<SyntheticFrameProvider>(mode))
+                    : std::static_pointer_cast<FrameProvider>(std::make_shared<IpcFrameProvider>(mode));
     frame_index_ = 0;
     next_deadline_ = std::chrono::steady_clock::now();
     started_ = true;
@@ -348,7 +376,7 @@ STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
     const auto frame_duration = std::chrono::nanoseconds(1'000'000'000LL / mode_.frames_per_second);
     next_deadline_ = (now > deadline ? now : deadline) + frame_duration;
     const auto frame_number = frame_index_++;
-    const auto frame = provider_->NextFrame(frame_number);
+    auto provider = provider_;
     auto allocator = allocator_;
     lock.unlock();
     if (now < deadline) std::this_thread::sleep_until(deadline);
@@ -358,6 +386,8 @@ STDMETHODIMP CamyllaMediaStream::RequestSample(IUnknown* token) {
         if (!started_ || stream_state_ != MF_STREAM_STATE_RUNNING)
             return LogSampleFailure(L"state after wait", MF_E_INVALIDREQUEST);
     }
+
+    const auto frame = provider->NextFrame(frame_number);
 
     if (!allocator) return LogSampleFailure(L"allocator", MF_E_NOT_INITIALIZED);
     ComPtr<IMFSample> sample;

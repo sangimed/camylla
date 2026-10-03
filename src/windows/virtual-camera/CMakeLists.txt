@@ -1,5 +1,6 @@
 add_library(camylla_virtual_camera_core
     src/cadence.cpp
+    src/ipc_protocol.cpp
     src/synthetic_frame_provider.cpp
     src/video_mode.cpp
 )
@@ -18,12 +19,15 @@ if(WIN32)
         src/camylla_virtual_camera_source.def
         src/dll_main.cpp
         src/media_source.cpp
+        src/ipc_frame_provider.cpp
     )
     target_link_libraries(camylla_virtual_camera_source PRIVATE
         camylla_virtual_camera_core
         mfplat
         mf
         mfuuid
+        advapi32
+        wtsapi32
     )
     target_compile_features(camylla_virtual_camera_source PRIVATE cxx_std_20)
     target_compile_definitions(camylla_virtual_camera_source PRIVATE UNICODE _UNICODE)

@@ -10,6 +10,7 @@ namespace Camylla.Desktop;
 public sealed partial class MainWindow : Window
 {
     private readonly ReceiverHost receiver = new();
+    private readonly CameraPipePublisher cameraPublisher;
     private readonly CancellationTokenSource stop = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private WriteableBitmap? imageSource;
@@ -26,6 +27,8 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        cameraPublisher = new CameraPipePublisher(receiver);
+        cameraPublisher.Start();
         timer.Tick += OnTick;
         Closed += OnClosed;
         receiver.Log += message =>
@@ -121,6 +124,7 @@ public sealed partial class MainWindow : Window
                 $"· network errors {snapshot.NetworkErrors} · resets {snapshot.DecoderResets} " +
                 $"· NV12 {snapshot.Width}×{snapshot.Height}/stride {snapshot.Stride} " +
                 $"· active buffers {OwnedNv12Frame.ActiveBufferCount}/high-water {OwnedNv12Frame.BufferHighWater} " +
+                $"· camera IPC live {cameraPublisher.Published}/neutral {cameraPublisher.Neutral}/errors {cameraPublisher.Failures} " +
                 $"· last sequence {snapshot.LastSequence} · PTS {snapshot.LastPtsUs} µs";
             WriteDiagnostics(snapshot);
         }
@@ -142,6 +146,8 @@ public sealed partial class MainWindow : Window
             catch (OperationCanceledException) { }
             catch (Exception error) { Debug.WriteLine(error); }
         receiver.Dispose();
+        try { cameraPublisher.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        catch (Exception error) { Debug.WriteLine(error); }
         stop.Dispose();
         diagnosticsLog?.Dispose();
         ClearPreview();
