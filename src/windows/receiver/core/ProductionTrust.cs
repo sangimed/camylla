@@ -26,6 +26,7 @@ public sealed class ProductionTrust : IDisposable
     private X509Certificate2 certificate;
     private Invitation? invitation;
     private Challenge? challenge;
+    private string? completedPairId;
     private readonly Dictionary<string, Queue<long>> attempts = new();
     private readonly Queue<long> globalAttempts = new();
     private sealed record Invitation(string Id, byte[] Hash, DateTimeOffset Expires, long Created);
@@ -78,6 +79,7 @@ public sealed class ProductionTrust : IDisposable
     }
     internal bool PairingOpen { get { lock (gate) return ValidInvitation() != null; } }
     public event Action<string>? PeerRevoked;
+    public string? CompletedPairId { get { lock (gate) return completedPairId; } }
 
     public PairInvitation BeginInvitation(string host, int port = 58413)
     {
@@ -146,7 +148,7 @@ public sealed class ProductionTrust : IDisposable
             if (phones.Count >= 32) throw new AuthenticationException("pair_rejected");
             phones.Add(new(c.PhoneId, c.Name, c.Certificate, false, DateTimeOffset.UtcNow));
             var next = database with { Phones = phones };
-            Save(next); database = next; challenge = null;
+            Save(next); database = next; completedPairId = c.PairId; challenge = null;
             return new { type = "pair_ok", version = 3, desktop_id = DesktopId, phone_id = authenticatedPhone };
         }
     }

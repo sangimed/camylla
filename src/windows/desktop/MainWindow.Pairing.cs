@@ -14,6 +14,7 @@ public sealed partial class MainWindow
     private string phonesSignature = "";
     private long lastPairingUpdate;
     private bool pairDialogShowing;
+    private string? displayedPairId;
 
     private async void OnPair(object sender, RoutedEventArgs args)
     {
@@ -24,6 +25,7 @@ public sealed partial class MainWindow
                 PairStatus.Text = "Stop phone capture before changing trust."; return;
             }
             invitation = receiver.Trust!.BeginInvitation(LanAddressBox.Text.Trim());
+            displayedPairId = invitation.PairId;
             InvitationBox.Text = invitation.Uri;
             using var generator = new QRCodeGenerator();
             using var data = generator.CreateQrCode(invitation.Uri, QRCodeGenerator.ECCLevel.M);
@@ -51,6 +53,7 @@ public sealed partial class MainWindow
     }
     private void OnPairClosed(object sender, object args)
     {
+        displayedPairId = null;
         receiver.Trust!.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = "";
     }
     private void UpdatePairingUi()
@@ -58,6 +61,11 @@ public sealed partial class MainWindow
         if (lastPairingUpdate != 0 && Stopwatch.GetElapsedTime(lastPairingUpdate).TotalMilliseconds < 500) return;
         lastPairingUpdate = Stopwatch.GetTimestamp();
         var trust = receiver.Trust!;
+        if (pairDialogShowing && displayedPairId != null && trust.CompletedPairId == displayedPairId)
+        {
+            PairDialog.Hide();
+            ConnectionHelp.Text = "Phone paired. Tap Start on your phone when ready.";
+        }
         var candidate = trust.Candidate;
         if (candidate != null)
         {
