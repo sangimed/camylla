@@ -43,7 +43,12 @@ general migration or rotation result.
 | Close QR dialog after pairing | PASS, automated hardware/UI Automation | `qr-autoclose-hardware-test.txt` and `qr-autoclose-ui-confirmation.txt`; S21 pairing succeeded and the dialog disappeared after its close animation. Closure is tied to the displayed invitation's successful trust commit, not merely decoding a QR or finding an existing trusted phone. |
 | User scan and resulting paired screen | PASS, user confirmed | User confirmed the revised pairing flow with “c'est bon c'est mieux !” after the automatic QR dialog closure change. |
 | Camera stream / preview after v3 pairing | PASS, user confirmed for OBS | User stated that streaming with OBS works and requested skipping a repeat of that test. No new counters, performance measurements or restart/revocation results are inferred from this confirmation. |
-| Restart, revoke, missing/expired client, wrong server on S21 | **PENDING** | Windows regression results do not replace the physical gate |
+| Trust after desktop/Android process restart | PASS, automated hardware | `trust-after-restart-hardware-test-2.txt`; existing Keystore/DPAPI trust authenticated control and video without any invitation or new pairing |
+| Revoke active control and video | PASS, automated hardware/UI Automation | `active-revocation-hardware-test-2.txt` and `active-revocation-desktop-action-2.txt`; desktop Revoke action closed both connections while control heartbeat and video configuration keepalive were active; no camera frames |
+| Revoked peer reconnect and persistence | PASS, automated hardware | `revoked-reconnect-hardware-test.txt` and `revoked-after-desktop-restart-test.txt`; control/video admission refused, including after receiver restart |
+| Missing/expired client and wrong server pin on S21 | PASS, automated hardware | `invalid-identities-hardware-test.txt`, three tests; both ports checked, including a genuinely expired certificate on a temporary nonexportable Keystore key |
+| Fresh re-pair after revocation | PASS, automated hardware | `repair-after-revocation-test.txt` and `trust-restored-final-test.txt`; fresh one-use invitations restored trust through certificate proof; test authorization supplied privately over ADB, not an optical scan |
+| Immediate bind/Stop acknowledgement | PASS after correction, automated hardware | Three subsequent successful runs in `quick-stop-regression-1.txt` through `quick-stop-regression-3.txt`; final receiver snapshot Disconnected, queue/buffers zero, decoder/network errors zero |
 | Identity replacement and rotation transaction | **NOT IMPLEMENTED** | Required before issue #25 can pass |
 
 Local evidence is preserved under
@@ -80,3 +85,25 @@ The separate instrumentation test
 `PairingHardwareTest#scannerHasNoVisibleManualOrApprovalSteps` checks the installed
 app's scanner content. If keyguard covers the window, that result is a content
 check, not visual confirmation that the user saw the scanner.
+
+## Restart and revocation test findings
+
+The first restart test authenticated successfully but hit an intermittent
+`DECRYPTION_FAILED_OR_BAD_RECORD_MAC` while reading the Stop acknowledgement.
+Evidence remains in `trust-after-restart-hardware-test.txt`. The video handler
+could still be sending its control-channel sync when Stop cancelled that write.
+Stop now acquires the session's control write gate, finishes any in-flight record,
+cancels the session, and writes its acknowledgement under the same gate. Expected
+transport interruption during session shutdown is not counted as a new network
+failure. The original failed result is superseded only by the successful named
+retries above; it has not been removed.
+
+The first active-revocation test's video connection timed out because it sent no
+media. Its result therefore did not prove revocation of a live video connection.
+The second test keeps that connection alive with configuration records until the
+desktop revokes it. No camera is opened and no frames are decoded. The successful
+result is limited to authenticated session termination, not OBS visual behavior.
+
+After the tests, fresh pairing restored the S21's trust. Capture remains stopped;
+the next Start must still be performed by the phone user. No automatic capture,
+identity rotation, upgrade migration, or full #25 acceptance is claimed here.

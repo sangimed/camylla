@@ -368,6 +368,8 @@ public sealed partial class ReceiverHost : IDisposable
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested || session?.Token.IsCancellationRequested == true) { }
+            catch (Exception error) when ((error is IOException or SocketException) &&
+                (ct.IsCancellationRequested || session?.Token.IsCancellationRequested == true)) { }
             catch (OperationCanceledException)
             {
                 Report("Video read timeout; closing stale channel");
@@ -422,6 +424,14 @@ internal sealed class Session(string id, string mode, string lens, string peer, 
     {
         await sendGate.WaitAsync(ct);
         try { await Wire.WriteControlAsync(control, message, ct); }
+        finally { sendGate.Release(); }
+    }
+    public async Task StopAndSendAsync(object message, CancellationToken ct)
+    {
+        // Finish an in-flight sync record before cancellation, then serialize the Stop acknowledgement.
+        // Cancelling a TLS write and reusing that stream can corrupt its next record.
+        await sendGate.WaitAsync(ct);
+        try { Stop(); await Wire.WriteControlAsync(control, message, ct); }
         finally { sendGate.Release(); }
     }
 }

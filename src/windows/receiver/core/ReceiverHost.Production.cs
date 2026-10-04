@@ -143,8 +143,8 @@ public sealed partial class ReceiverHost
                     {
                         V3Record.Require(message.RootElement, "stop", "session_id");
                         if (V3Record.Hex(message.RootElement, "session_id", 16) != session.Id) throw new AuthenticationException("stale_session");
-                        session.Stop(); security.Video?.Dispose(); ClearFrames();
-                        await session.SendAsync(new { type = "stopped", version = 3, session_id = session.Id }, ct);
+                        await session.StopAndSendAsync(new { type = "stopped", version = 3, session_id = session.Id }, ct);
+                        security.Video?.Dispose(); ClearFrames();
                         break;
                     }
                     if (kind == "video_rebind")
