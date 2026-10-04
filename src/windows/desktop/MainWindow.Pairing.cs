@@ -15,6 +15,9 @@ public sealed partial class MainWindow
     private long lastPairingUpdate;
     private bool pairDialogShowing;
     private string? displayedPairId;
+    private bool pairingReviewTransition;
+    private bool replacementDialogShowing;
+    private string? reviewedReplacement;
 
     private async void OnPair(object sender, RoutedEventArgs args)
     {
@@ -53,6 +56,7 @@ public sealed partial class MainWindow
     }
     private void OnPairClosed(object sender, object args)
     {
+        if (pairingReviewTransition) { invitation = null; PairQr.Source = null; InvitationBox.Text = ""; return; }
         displayedPairId = null;
         receiver.Trust!.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = "";
     }
@@ -61,6 +65,8 @@ public sealed partial class MainWindow
         if (lastPairingUpdate != 0 && Stopwatch.GetElapsedTime(lastPairingUpdate).TotalMilliseconds < 500) return;
         lastPairingUpdate = Stopwatch.GetTimestamp();
         var trust = receiver.Trust!;
+        DesktopFingerprint.Text = $"Desktop fingerprint: {trust.DesktopId}";
+        UpdateRotationUi();
         if (pairDialogShowing && displayedPairId != null && trust.CompletedPairId == displayedPairId)
         {
             PairDialog.Hide();
@@ -69,6 +75,8 @@ public sealed partial class MainWindow
         var candidate = trust.Candidate;
         if (candidate != null)
         {
+            if (candidate.ReplacesId != null && !candidate.Approved && !replacementDialogShowing && reviewedReplacement != candidate.ChallengeId)
+                _ = ReviewReplacementAsync(candidate);
             invitation = null; PairQr.Source = null; InvitationBox.Text = "";
             CandidateText.Text = $"Phone: {candidate.Name}\nFingerprint: {candidate.Id}\nChallenge expires at {candidate.Expires.LocalDateTime:T}";
             PairStatus.Text = "Finishing secure pairing automatically…";
@@ -88,6 +96,7 @@ public sealed partial class MainWindow
         phonesSignature = signature;
         if (phones.Any(p => !p.Revoked)) PairStatus.Text = "Phone paired. Tap Start on the phone when ready.";
         var selected = (TrustedPhonesBox.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (phones.Any(p => p.Id == selected && p.Revoked)) selected = null;
         TrustedPhonesBox.Items.Clear();
         foreach (var phone in phones)
         {
@@ -95,7 +104,32 @@ public sealed partial class MainWindow
             TrustedPhonesBox.Items.Add(item);
             if (phone.Id == selected) TrustedPhonesBox.SelectedItem = item;
         }
-        if (TrustedPhonesBox.SelectedIndex < 0 && TrustedPhonesBox.Items.Count > 0) TrustedPhonesBox.SelectedIndex = 0;
+        if (TrustedPhonesBox.SelectedIndex < 0 && TrustedPhonesBox.Items.Count > 0)
+        {
+            var index = phones.ToList().FindIndex(p => !p.Revoked);
+            TrustedPhonesBox.SelectedIndex = index >= 0 ? index : 0;
+        }
+    }
+    private async Task ReviewReplacementAsync(PairCandidate candidate)
+    {
+        replacementDialogShowing = true; reviewedReplacement = candidate.ChallengeId;
+        try
+        {
+            pairingReviewTransition = true;
+            if (pairDialogShowing) PairDialog.Hide();
+            for (var i = 0; pairDialogShowing && i < 20; i++) await Task.Delay(50);
+            pairingReviewTransition = false;
+            var dialog = new ContentDialog
+            {
+                XamlRoot = ((FrameworkElement)Content).XamlRoot,
+                Title = "Replace this phone's identity?",
+                Content = $"Phone: {candidate.Name}\n\nPrevious fingerprint:\n{candidate.ReplacesId}\n\nNew fingerprint:\n{candidate.Id}\n\nApprove only if you requested this change. The previous identity will be revoked.",
+                PrimaryButtonText = "Approve replacement", CloseButtonText = "Cancel"
+            };
+            receiver.Trust!.ApprovePairReplacement(candidate.ChallengeId, await dialog.ShowAsync() == ContentDialogResult.Primary);
+        }
+        catch (Exception) { ConnectionHelp.Text = "Identity replacement expired or was cancelled. Try a fresh invitation."; }
+        finally { pairingReviewTransition = false; replacementDialogShowing = false; }
     }
     private async void OnRevoke(object sender, RoutedEventArgs args)
     {

@@ -13,12 +13,14 @@ namespace Camylla.Receiver;
 
 public sealed record TrustedPhone(string Id, string Name, string Certificate, bool Revoked, DateTimeOffset Updated);
 public sealed record PairInvitation(string Uri, string PairId, DateTimeOffset Expires, string DesktopId);
-public sealed record PairCandidate(string Id, string Name, string ChallengeId, DateTimeOffset Expires);
+public sealed record PairCandidate(string Id, string Name, string ChallengeId, DateTimeOffset Expires,
+    string? ReplacesId, bool Approved);
 
 /// <summary>User-scoped v3 identities and trust. Invitations, challenges and session secrets stay in memory.</summary>
-public sealed class ProductionTrust : IDisposable
+public sealed partial class ProductionTrust : IDisposable
 {
-    private sealed record Database(string Thumbprint, string Name, List<TrustedPhone> Phones);
+    private sealed record Database(string Thumbprint, string Name, List<TrustedPhone> Phones,
+        List<RotationResult>? Rotations = null, List<string>? RetiredKeys = null);
     private readonly object gate = new();
     private readonly string path;
     private readonly TimeProvider clock;
@@ -31,7 +33,7 @@ public sealed class ProductionTrust : IDisposable
     private readonly Queue<long> globalAttempts = new();
     private sealed record Invitation(string Id, byte[] Hash, DateTimeOffset Expires, long Created);
     private sealed record Challenge(string PairId, string Id, string PhoneId, string Name,
-        string Certificate, long Created);
+        string Certificate, long Created, string? ReplacesId, bool Approved);
 
     public ProductionTrust() : this(null) { }
     internal ProductionTrust(string? testDirectory, TimeProvider? clock = null)
@@ -65,17 +67,18 @@ public sealed class ProductionTrust : IDisposable
             database = new Database(certificate.Thumbprint, Environment.MachineName, []);
             Save(database);
         }
+        CleanupRetiredKeys();
     }
 
     internal X509Certificate2 Certificate => certificate;
     internal TimeProvider TestClock => clock;
-    public string DesktopId => PeerId(certificate);
+    public string DesktopId { get { lock (gate) return PeerId(certificate); } }
     public string DesktopName { get { lock (gate) return database.Name; } }
     public IReadOnlyList<TrustedPhone> Phones { get { lock (gate) return database.Phones.ToArray(); } }
     public PairCandidate? Candidate
     {
         get { lock (gate) return ValidChallenge() is { } c
-            ? new(c.PhoneId, c.Name, c.Id, clock.GetUtcNow().AddSeconds(Math.Max(0, 30 - clock.GetElapsedTime(c.Created).TotalSeconds))) : null; }
+            ? new(c.PhoneId, c.Name, c.Id, clock.GetUtcNow().AddSeconds(Math.Max(0, 30 - clock.GetElapsedTime(c.Created).TotalSeconds)), c.ReplacesId, c.Approved) : null; }
     }
     internal bool PairingOpen { get { lock (gate) return ValidInvitation() != null; } }
     public event Action<string>? PeerRevoked;
@@ -90,6 +93,7 @@ public sealed class ProductionTrust : IDisposable
         var expires = clock.GetUtcNow().AddSeconds(120);
         lock (gate)
         {
+            if (ValidRotation() != null) throw new AuthenticationException("session_busy");
             invitation = new(id, SHA256.HashData(Convert.FromHexString(cap)), expires, clock.GetTimestamp());
             challenge = null;
         }
@@ -112,14 +116,18 @@ public sealed class ProductionTrust : IDisposable
         if (PeerId(phone) != phoneId) throw new AuthenticationException("pair_rejected");
         lock (gate)
         {
+            if (ValidRotation() != null) throw new AuthenticationException("session_busy");
             var invite = ValidInvitation();
             if (invite == null || invite.Id != pairId ||
                 !CryptographicOperations.FixedTimeEquals(invite.Hash, SHA256.HashData(Convert.FromHexString(cap))))
                 throw new AuthenticationException("pair_rejected");
             invitation = null; // Consume before any response, including an interrupted response.
-            challenge = new(pairId, RandomHex(16), phoneId, name, certText, clock.GetTimestamp());
+            var previous = database.Phones.Where(p => p.Id != phoneId && p.Name == name)
+                .OrderBy(p => p.Revoked).ThenByDescending(p => p.Updated).FirstOrDefault();
+            challenge = new(pairId, RandomHex(16), phoneId, name, certText, clock.GetTimestamp(), previous?.Id, previous == null);
             return new { type = "pair_challenge", version = 3, pair_id = pairId,
-                challenge_id = challenge.Id, server_cert = Convert.ToBase64String(certificate.RawData), name = database.Name };
+                challenge_id = challenge.Id, server_cert = Convert.ToBase64String(certificate.RawData), name = database.Name,
+                requires_approval = previous != null, previous_phone_id = previous?.Id };
         }
     }
 
@@ -141,15 +149,39 @@ public sealed class ProductionTrust : IDisposable
         lock (gate)
         {
             var c = ValidChallenge();
-            if (c == null || c.PhoneId != authenticatedPhone ||
+            if (c == null || !c.Approved || c.PhoneId != authenticatedPhone ||
                 V3Record.Hex(value, "pair_id", 16) != c.PairId || V3Record.Hex(value, "challenge_id", 16) != c.Id)
                 throw new AuthenticationException("pair_rejected");
-            var phones = database.Phones.Where(p => p.Id != c.PhoneId).ToList();
+            var phones = database.Phones.Where(p => p.Id != c.PhoneId).Select(p =>
+                p.Id == c.ReplacesId ? p with { Revoked = true, Updated = clock.GetUtcNow() } : p).ToList();
             if (phones.Count >= 32) throw new AuthenticationException("pair_rejected");
             phones.Add(new(c.PhoneId, c.Name, c.Certificate, false, DateTimeOffset.UtcNow));
             var next = database with { Phones = phones };
             Save(next); database = next; completedPairId = c.PairId; challenge = null;
             return new { type = "pair_ok", version = 3, desktop_id = DesktopId, phone_id = authenticatedPhone };
+        }
+    }
+    public void ApprovePairReplacement(string challengeId, bool approved)
+    {
+        lock (gate)
+        {
+            var candidate = ValidChallenge();
+            if (candidate == null || candidate.Id != challengeId || candidate.ReplacesId == null)
+                throw new AuthenticationException("pair_rejected");
+            challenge = approved ? candidate with { Approved = true } : null;
+        }
+    }
+    internal object PairStatus(JsonElement value, string authenticatedPhone)
+    {
+        V3Record.Require(value, "pair_status", "pair_id", "challenge_id");
+        lock (gate)
+        {
+            var candidate = ValidChallenge();
+            if (candidate == null || candidate.PhoneId != authenticatedPhone ||
+                V3Record.Hex(value, "pair_id", 16) != candidate.PairId || V3Record.Hex(value, "challenge_id", 16) != candidate.Id)
+                throw new AuthenticationException("pair_rejected");
+            return new { type = "pair_state", version = 3, challenge_id = candidate.Id,
+                state = candidate.Approved ? "approved" : "awaiting_approval" };
         }
     }
     public void Revoke(string id)
@@ -160,6 +192,7 @@ public sealed class ProductionTrust : IDisposable
             var next = database with { Phones = phones };
             Save(next); database = next;
             if (challenge?.PhoneId == id) challenge = null;
+            if (rotation?.Candidate.PhoneId == id) CancelRotationLocked();
         }
         PeerRevoked?.Invoke(id);
     }
@@ -195,7 +228,9 @@ public sealed class ProductionTrust : IDisposable
         {
             var protectedBytes = ProtectedData.Protect(plain, null, DataProtectionScope.CurrentUser);
             var temp = path + ".new";
-            File.WriteAllBytes(temp, protectedBytes);
+            using (var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None,
+                4096, FileOptions.WriteThrough))
+            { output.Write(protectedBytes); output.Flush(flushToDisk: true); }
             File.Move(temp, path, true);
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
@@ -249,7 +284,7 @@ public sealed class ProductionTrust : IDisposable
             n.GetIPProperties().GatewayAddresses.Any(g => g.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any)))
         .SelectMany(n => n.GetIPProperties().UnicastAddresses)
         .FirstOrDefault(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.Address.ToString() ?? "";
-    public void Dispose() { CancelInvitation(); certificate.Dispose(); }
+    public void Dispose() { lock (gate) { CancelInvitation(); CancelRotationLocked(); certificate.Dispose(); } }
 }
 
 internal static class V3Record

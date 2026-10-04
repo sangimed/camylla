@@ -259,6 +259,8 @@ public sealed partial class ReceiverHost : IDisposable
     private async Task HandleVideoAsync(TcpClient client, X509Certificate2 certificate,
         string token, CancellationToken ct)
     {
+        if (Trust?.Rotation is { } rotation)
+        { await HandleRotationProofAsync(client, rotation, ct); return; }
         if (Trust != null && !productionConnections.Wait(0)) { client.Dispose(); return; }
         using (client)
         using (var tls = new SslStream(client.GetStream(), false))

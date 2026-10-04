@@ -30,10 +30,13 @@ import javax.security.auth.x500.X500Principal
 data class TrustedDesktop(val id: String, val name: String, val host: String, val certificate: String,
     val revoked: Boolean = false, val updatedAt: Long = System.currentTimeMillis())
 
-class ProductIdentity(private val context: Context, private val alias: String = IDENTITY_ALIAS) {
+class ProductIdentity(private val context: Context, requestedAlias: String? = null) {
     private val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    private val initialState = readProtectedState()
+    private val alias = requestedAlias ?: initialState?.optString("active_alias", IDENTITY_ALIAS) ?: IDENTITY_ALIAS
     init {
         if (!store.containsAlias(alias)) {
+            require(requestedAlias != null || initialState == null) { "Phone private key missing; re-pair required" }
             val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
             generator.initialize(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
                 .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
@@ -46,6 +49,87 @@ class ProductIdentity(private val context: Context, private val alias: String = 
                 .setCertificateNotAfter(Date(System.currentTimeMillis() + 5L * 365 * 24 * 3600 * 1000))
                 .build())
             generator.generateKeyPair()
+        }
+        if (requestedAlias == null) synchronized(STORE_LOCK) {
+            val current = readProtectedState()
+            if (current != null && current.optString("active_alias", IDENTITY_ALIAS) == alias) cleanupRetiredKeys(current)
+        }
+    }
+    val pendingRotation: PhoneRotation? get() = readProtectedState()?.optJSONObject("pending_rotation")?.let(PhoneRotation::fromJson)
+    fun newPhoneRotation(peer: TrustedDesktop): PhoneRotation {
+        require(pendingRotation == null && desktops().size < 32) { "Resolve the existing key change first" }
+        val newAlias = "camylla-v3-phone-${java.util.UUID.randomUUID()}"
+        val next = ProductIdentity(context, newAlias)
+        return PhoneRotation("phone", ProductIdentity.randomHex(16), phoneId, next.phoneId,
+            android.util.Base64.encodeToString(next.certificate.encoded, android.util.Base64.NO_WRAP),
+            newAlias, peer, System.currentTimeMillis(), android.os.SystemClock.elapsedRealtime())
+    }
+    fun persistRotation(value: PhoneRotation) = synchronized(STORE_LOCK) {
+        val state = checkedState()
+        require(state.optJSONObject("pending_rotation") == null || pendingRotation?.rotationId == value.rotationId) { "Key change already pending" }
+        state.put("pending_rotation", value.toJson()); writeProtectedState(state)
+    }
+    fun candidateIdentity(value: PhoneRotation): ProductIdentity =
+        if (value.role == "phone") ProductIdentity(context, value.newAlias) else this
+    fun discardUncommittedRotation(value: PhoneRotation) = synchronized(STORE_LOCK) {
+        val state = checkedState()
+        require(pendingRotation?.rotationId == value.rotationId) { "Key change mismatch" }
+        state.remove("pending_rotation"); writeProtectedState(state)
+        discardProposalKey(value)
+    }
+    fun discardProposalKey(value: PhoneRotation) {
+        if (value.role == "phone" && value.newAlias != alias && pendingRotation?.newAlias != value.newAlias)
+            store.deleteEntry(value.newAlias)
+    }
+    fun repairPendingRotation() = synchronized(STORE_LOCK) {
+        val state = checkedState()
+        val value = pendingRotation ?: return@synchronized
+        val peers = readStore().map { it.copy(revoked = true, updatedAt = System.currentTimeMillis()) }
+        if (value.role == "phone") {
+            val next = candidateIdentity(value)
+            require(next.phoneId == value.newId && next.privateKeyNonexportable)
+            state.put("active_alias", value.newAlias).put("phone_id", value.newId)
+            val retired = state.optJSONArray("retired_aliases") ?: JSONArray()
+            retired.put(alias); state.put("retired_aliases", retired)
+        }
+        state.put("desktops", peersJson(peers)).remove("pending_rotation")
+        writeProtectedState(state)
+        cleanupRetiredKeys(state)
+    }
+    fun commitRotation(value: PhoneRotation) = synchronized(STORE_LOCK) {
+        val state = checkedState()
+        require(pendingRotation?.rotationId == value.rotationId) { "Key change mismatch" }
+        val oldPeers = readStore()
+        require(oldPeers.any { it.id == value.peer.id && !it.revoked }) { "Desktop was locally revoked" }
+        val now = System.currentTimeMillis()
+        val peers: List<TrustedDesktop>
+        if (value.role == "phone") {
+            val next = candidateIdentity(value)
+            require(next.phoneId == value.newId && next.privateKeyNonexportable)
+            peers = oldPeers.map { if (it.id != value.peer.id) it.copy(revoked = true, updatedAt = now) else it.copy(updatedAt = now) }
+            state.put("active_alias", value.newAlias).put("phone_id", value.newId)
+            val retired = state.optJSONArray("retired_aliases") ?: JSONArray()
+            retired.put(alias); state.put("retired_aliases", retired)
+        } else {
+            require(value.oldId == value.peer.id && oldPeers.size < 32)
+            peers = oldPeers.map { if (it.id == value.oldId) it.copy(revoked = true, updatedAt = now) else it } +
+                value.peer.copy(id = value.newId, certificate = value.newCertificate, revoked = false, updatedAt = now)
+        }
+        state.put("desktops", peersJson(peers)).remove("pending_rotation")
+        writeProtectedState(state) // Atomically select identity and trust before retiring any key.
+        cleanupRetiredKeys(state)
+    }
+    private fun cleanupRetiredKeys(state: JSONObject) {
+        val retired = state.optJSONArray("retired_aliases") ?: return
+        val remaining = JSONArray()
+        for (index in 0 until retired.length()) {
+            val key = retired.getString(index)
+            if (key != state.optString("active_alias", IDENTITY_ALIAS))
+                runCatching { store.deleteEntry(key) }.onFailure { remaining.put(key) }
+        }
+        if (remaining.length() != retired.length()) {
+            state.put("retired_aliases", remaining)
+            runCatching { writeProtectedState(state) } // Active identity was already committed atomically.
         }
     }
     val certificate: X509Certificate get() = store.getCertificate(alias) as X509Certificate
@@ -103,6 +187,7 @@ class ProductIdentity(private val context: Context, private val alias: String = 
     }
     fun desktops(): List<TrustedDesktop> = readStore()
     fun trust(peer: TrustedDesktop, replaceId: String? = null) = synchronized(STORE_LOCK) {
+        require(pendingRotation == null) { "Resolve the pending key change before pairing" }
         PairInvitation.hex(peer.id, 32)
         val previous = readStore().filter { it.id != peer.id }.map {
             if (it.id == replaceId) it.copy(revoked = true, updatedAt = System.currentTimeMillis()) else it
@@ -124,29 +209,46 @@ class ProductIdentity(private val context: Context, private val alias: String = 
         return store.getKey(STORAGE_ALIAS, null) as SecretKey
     }
     private fun readStore(): List<TrustedDesktop> = synchronized(STORE_LOCK) {
+        val data = readProtectedState() ?: return@synchronized emptyList()
+        require(data.getString("phone_id") == phoneId) { "Phone identity changed; re-pair required" }
+        val peers = data.getJSONArray("desktops")
+        require(peers.length() <= 32)
+        (0 until peers.length()).map { i -> peers.getJSONObject(i).let {
+            TrustedDesktop(it.getString("id"), it.getString("name"), it.getString("host"),
+                it.getString("certificate"), it.getBoolean("revoked"), it.getLong("updated_at"))
+        } }
+    }
+    private fun readProtectedState(): JSONObject? = synchronized(STORE_LOCK) {
         val file = File(context.noBackupFilesDir, "trust-v3.dat")
-        if (!file.exists()) return@synchronized emptyList()
+        if (!file.exists()) return@synchronized null
         val bytes = AtomicFile(file).readFully()
         require(bytes.size in 29..131072) { "Invalid trust store" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, storageKey(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
         val plain = cipher.doFinal(bytes, 12, bytes.size - 12)
         try {
-            val data = JSONObject(plain.toString(Charsets.UTF_8))
-            require(data.getString("phone_id") == phoneId) { "Phone identity changed; re-pair required" }
-            val peers = data.getJSONArray("desktops")
-            require(peers.length() <= 32)
-            (0 until peers.length()).map { i -> peers.getJSONObject(i).let {
-                TrustedDesktop(it.getString("id"), it.getString("name"), it.getString("host"),
-                    it.getString("certificate"), it.getBoolean("revoked"), it.getLong("updated_at"))
-            } }
+            JSONObject(plain.toString(Charsets.UTF_8))
         } finally { plain.fill(0) }
     }
     private fun writeStore(peers: List<TrustedDesktop>) {
+        val state = checkedState().put("desktops", peersJson(peers))
+        writeProtectedState(state)
+    }
+    private fun checkedState(): JSONObject {
+        val state = readProtectedState() ?: JSONObject().put("phone_id", phoneId).put("active_alias", alias).put("desktops", JSONArray())
+        require(state.getString("phone_id") == phoneId) { "Phone identity changed; re-pair required" }
+        if (!state.has("active_alias")) state.put("active_alias", alias)
+        return state
+    }
+    private fun peersJson(peers: List<TrustedDesktop>): JSONArray {
         val array = JSONArray()
         peers.forEach { array.put(JSONObject().put("id", it.id).put("name", it.name).put("host", it.host)
             .put("certificate", it.certificate).put("revoked", it.revoked).put("updated_at", it.updatedAt)) }
-        val plain = JSONObject().put("phone_id", phoneId).put("desktops", array).toString().toByteArray(Charsets.UTF_8)
+        return array
+    }
+    private fun writeProtectedState(state: JSONObject) {
+        val plain = state.toString().toByteArray(Charsets.UTF_8)
+        require(plain.size <= 131_044) { "Trust store full" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, storageKey())
         val bytes = try { cipher.iv + cipher.doFinal(plain) } finally { plain.fill(0) }

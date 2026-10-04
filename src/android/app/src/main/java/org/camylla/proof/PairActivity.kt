@@ -114,6 +114,9 @@ class PairActivity : ComponentActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
     private fun beginPair() {
+        if (identity.pendingRotation != null) {
+            status.text = "Resume the pending security key change before pairing."; return
+        }
         try {
             var invite = PairInvitation.parse(invitation.text.toString().trim())
             val override = address.text.toString().trim()
@@ -125,6 +128,9 @@ class PairActivity : ComponentActivity() {
                 val result = runCatching {
                     val client = PairClient(identity)
                     val pair = client.begin(invite, Build.MODEL)
+                    if (pair.requiresApproval) runOnUiThread {
+                        if (!destroyed) status.text = "Approve this phone's changed identity on your PC. Pairing finishes automatically."
+                    }
                     phase = "certificate proof"
                     check(!destroyed) { "Pairing cancelled" }
                     client.commit(pair)

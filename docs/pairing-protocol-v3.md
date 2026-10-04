@@ -1,6 +1,6 @@
 # M4 production pairing and authenticated sessions (proposed v3)
 
-Status: reviewable specification for #24. **Not implemented.** The M3 v2 wire format and development pin/secret remain the running proof until a later implementation issue migrates both endpoints atomically. This document defines a new major version because a v2 peer must fail closed rather than silently accept a production peer with different authentication.
+Status: reviewed design for #24, implemented on the #25 feature branch. Normal Android/desktop operation uses v3; v2 development credentials require the explicit CLI development mode. Physical rotation validation is still pending. See `validation/android-windows-m4-4.md` for the exact evidence and remaining gates. This document defines a new major version because a v2 peer must fail closed rather than silently accept a production peer with different authentication.
 
 ## Roles, identities, and cryptography
 
@@ -110,3 +110,24 @@ State transitions: desktop `unpaired -> invitation -> challenge -> paired -> act
 | Lost video socket | Fresh `video_rebind` ticket on live control only, then sync frame; no stale queued frames replayed. |
 
 Implementation tests should cover both Android and Windows parsers/state machines, real TLS mutual-auth against generated test identities, certificate replacement/revocation, persistence under user scope, and incompatible v2/v3 attempts. A required #25 integration acceptance test uses a real Android 10+ device (including the S21 Ultra target): generate a nonexportable Android Keystore P-256 identity, present it through the selected `KeyManager`/`SSLContext` to Windows `SslStream` on **both control and video sockets**, verify pinned server and client SPKIs, then reconnect both sockets and restart both apps using persisted trust. Repeat with missing/revoked/expired client keys and wrong server pin; each must fail closed without exporting the key or falling back to the M3 secret. Record Android version, TLS version, certificate and KeyManager provider behavior, and Windows build. Physical S21 Ultra/Windows firewall and manual-address UX validation belongs to M4.4; this specification alone claims no device pass.
+
+## Implementation additions for changed identity and interrupted rotation
+
+`pair_challenge` also carries `requires_approval` (boolean) and
+`previous_phone_id` (null for ordinary pairing, previous 64-character SPKI ID
+for a same-name identity replacement). Friendly names are only a prompt to
+review a possible replacement, never proof of identity. Windows displays old
+and new fingerprints and requires approval before atomically revoking the old
+identity and committing the new one. Android waits automatically using a
+mutual-TLS `pair_status` record with `pair_id` and `challenge_id`;
+`pair_state` returns `challenge_id` and state `awaiting_approval` or `approved`.
+The same 30-second challenge deadline applies. Ordinary QR pairing needs no
+additional approval and closes the PC QR dialog on successful commit.
+
+Rotation status may be `awaiting_approval`, `approved`, `ready`, `committed`,
+or `expired`. The phone's Resume action probes the proposed identity first.
+Explicit Repair pairing revokes all locally saved PCs, clears the pending
+transaction atomically, and requires a fresh QR. For a pending phone-key change
+it retains the proposed nonexportable key and retires the previous key after
+local persistence, avoiding an old-key fallback when remote commit is uncertain.
+Neither resume nor repair starts capture.

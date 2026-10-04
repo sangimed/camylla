@@ -42,7 +42,7 @@ public sealed partial class ReceiverHost
         }
     }
     private async Task<string?> AuthenticateProductionAsync(SslStream tls, X509Certificate2 certificate,
-        bool control, CancellationToken ct)
+        bool control, CancellationToken ct, string? proofId = null)
     {
         string? phoneId = null;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -55,12 +55,12 @@ public sealed partial class ReceiverHost
             {
                 if (remote == null)
                 {
-                    var allowed = Trust!.AcceptCertificate(null, control);
+                    var allowed = proofId == null && Trust!.AcceptCertificate(null, control);
                     Report($"v3 certificate callback missing_client_certificate allowed={allowed}");
                     return allowed;
                 }
                 using var cert = X509CertificateLoader.LoadCertificate(remote.GetRawCertData());
-                var accepted = Trust!.AcceptCertificate(cert, control);
+                var accepted = proofId == null ? Trust!.AcceptCertificate(cert, control) : Trust!.AcceptProofCertificate(cert, proofId);
                 Report($"v3 certificate callback presented_client_certificate accepted={accepted}");
                 if (accepted) phoneId = ProductionTrust.PeerId(cert);
                 return accepted;
@@ -85,9 +85,13 @@ public sealed partial class ReceiverHost
             if (!productionConnections.Wait(0)) return;
             Session? session = null;
             string? phoneId = null;
+            var connection = Guid.NewGuid();
             try
             {
-                phoneId = await AuthenticateProductionAsync(tls, certificate, true, ct);
+                using var currentCertificate = Trust!.CopyControlCertificate();
+                var serverId = ProductionTrust.PeerId(currentCertificate);
+                phoneId = await AuthenticateProductionAsync(tls, currentCertificate, true, ct);
+                if (serverId != Trust.DesktopId) throw new AuthenticationException("untrusted_peer");
                 using var first = await ReadProductionRecordAsync(tls, ct);
                 var value = first.RootElement;
                 var type = Wire.RequiredString(value, "type");
@@ -106,7 +110,17 @@ public sealed partial class ReceiverHost
                     Report($"v3 pairing trust committed phone={phoneId}");
                     return;
                 }
+                if (type == "pair_status")
+                {
+                    await Wire.WriteControlAsync(tls, Trust!.PairStatus(value, phoneId), ct);
+                    return;
+                }
                 if (!Trust!.IsTrusted(phoneId)) throw new AuthenticationException("untrusted_peer");
+                if (type is "rotate_offer" or "rotate_request" or "rotation_status" or "rotate_commit")
+                {
+                    await HandleRotationControlAsync(tls, value, phoneId, connection, ct);
+                    return;
+                }
                 V3Record.Require(value, "start", "phone_id", "client_nonce", "codec", "modes", "mode", "lens");
                 if (V3Record.Hex(value, "phone_id", 32) != phoneId) throw new AuthenticationException("identity_mismatch");
                 var clientNonce = V3Record.Hex(value, "client_nonce", 16);
@@ -124,6 +138,7 @@ public sealed partial class ReceiverHost
                 lock (Gate)
                 {
                     if (active != null) throw new AuthenticationException("session_busy");
+                    if (Trust.Rotation != null || serverId != Trust.DesktopId) throw new AuthenticationException("session_busy");
                     if (!Trust.IsTrusted(phoneId)) throw new AuthenticationException("untrusted_peer");
                     security = new(session, phoneId, clientNonce); ticket = security.NewTicket();
                     active = session; productionSession = security;
@@ -183,6 +198,7 @@ public sealed partial class ReceiverHost
             }
             finally
             {
+                Trust!.DetachRotationControl(connection);
                 if (session != null)
                 {
                     session.Stop();
@@ -195,7 +211,9 @@ public sealed partial class ReceiverHost
     private async Task<Session> AuthenticateProductionVideoAsync(SslStream tls, TcpClient client,
         X509Certificate2 certificate, CancellationToken ct)
     {
-        var phone = await AuthenticateProductionAsync(tls, certificate, false, ct);
+        using var currentCertificate = Trust!.CopyControlCertificate();
+        var serverId = ProductionTrust.PeerId(currentCertificate);
+        var phone = await AuthenticateProductionAsync(tls, currentCertificate, false, ct);
         using var bind = await ReadProductionRecordAsync(tls, ct);
         var value = bind.RootElement;
         V3Record.Require(value, "bind", "session_id", "phone_id", "client_nonce", "server_nonce", "video_ticket");
@@ -206,6 +224,7 @@ public sealed partial class ReceiverHost
         var phoneId = V3Record.Hex(value, "phone_id", 32);
         lock (Gate)
         {
+            if (Trust.Rotation != null || serverId != Trust.DesktopId) throw new AuthenticationException("bind_rejected");
             var security = productionSession;
             if (security == null || active != security.Session || security.Session.Token.IsCancellationRequested ||
                 phone != security.PhoneId || phoneId != phone || id != security.Session.Id ||

@@ -100,6 +100,7 @@ class CaptureService : LifecycleService() {
                 snapshot = StatsSnapshot(state = "Starting", requestedMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
                 try {
                     val identity = ProductIdentity(this)
+                    require(identity.pendingRotation == null) { "Resume the pending key change before capture" }
                     val peerId = intent.getStringExtra(EXTRA_PEER).orEmpty()
                     val peer = identity.desktops().singleOrNull { it.id == peerId && !it.revoked }
                         ?: throw IllegalStateException("Pair a desktop before starting capture")

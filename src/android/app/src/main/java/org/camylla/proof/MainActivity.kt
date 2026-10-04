@@ -35,8 +35,9 @@ class MainActivity : Activity() {
     private lateinit var captureControls: LinearLayout
     private lateinit var trustControls: LinearLayout
     private lateinit var connectionStatus: TextView
+    private lateinit var resumeKeyChange: Button
     private var trustedDesktops: List<TrustedDesktop> = emptyList()
-    private val identity by lazy { ProductIdentity(this) }
+    private val identity get() = ProductIdentity(this)
     private var trustError = ""
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
@@ -56,8 +57,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        fun button(parent: LinearLayout, label: String, action: () -> Unit) {
-            parent.addView(Button(this).apply { text = label; setOnClickListener { action() } })
+        fun button(parent: LinearLayout, label: String, action: () -> Unit): Button {
+            val value = Button(this).apply { text = label; setOnClickListener { action() } }
+            parent.addView(value); return value
         }
         layout.addView(TextView(this).apply { text = "Camylla"; textSize = 28f })
         connectionStatus = TextView(this).apply { textSize = 18f; setPadding(0, 24, 0, 24) }
@@ -108,6 +110,24 @@ class MainActivity : Activity() {
                     runCatching { identity.revoke(peer.id); refreshDesktops() }.onFailure { connectionStatus.text = "Could not save this change." }
                 }.setNegativeButton("Cancel", null).show()
         }
+        button(settings, "Change phone security key") { openRotation("phone") }
+        button(settings, "Confirm PC key change") { openRotation("desktop") }
+        resumeKeyChange = button(layout, "Resume key change") {
+            if (identity.pendingRotation != null) android.app.AlertDialog.Builder(this)
+                .setTitle("Pending security key change")
+                .setMessage("Resume to check whether the PC committed the change. If recovery is impossible, repair forgets all PCs and requires scanning a fresh QR. Capture stays stopped.")
+                .setPositiveButton("Resume") { _, _ -> openRotation("resume") }
+                .setNeutralButton("Repair pairing") { _, _ ->
+                    android.app.AlertDialog.Builder(this).setTitle("Forget PCs and pair again?")
+                        .setMessage("All saved PC approvals will be revoked locally. The proposed phone key is retained if it may already be committed; the previous key will not be restored.")
+                        .setPositiveButton("Repair") { _, _ ->
+                            runCatching { identity.repairPendingRotation(); refreshDesktops() }
+                                .onFailure { connectionStatus.text = "Repair could not be saved. Capture remains blocked." }
+                        }.setNegativeButton("Cancel", null).show()
+                }.setNegativeButton("Cancel", null).show()
+            else connectionStatus.text = "No key change is pending."
+        }
+        resumeKeyChange.visibility = android.view.View.GONE
         captureControls.addView(settings)
         layout.addView(captureControls)
         stats = TextView(this).apply { textSize = 14f; visibility = android.view.View.GONE }
@@ -120,6 +140,9 @@ class MainActivity : Activity() {
     }
 
     private fun startWithPermission() {
+        if (identity.pendingRotation != null) {
+            connectionStatus.text = "Resume the pending key change before starting capture."; return
+        }
         if (trustedDesktops.getOrNull(desktops.selectedItemPosition) == null) {
             stats.text = "Pair a desktop before starting capture."; return
         }
@@ -136,6 +159,13 @@ class MainActivity : Activity() {
             .putExtra(CaptureService.EXTRA_LENS, requestedLens)
             .putExtra(CaptureService.EXTRA_PEER, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id)
         ContextCompat.startForegroundService(this, intent)
+    }
+    private fun openRotation(role: String) {
+        if (service?.stats()?.state?.let { it != "Stopped" } == true) {
+            connectionStatus.text = "Stop capture before changing security keys."; return
+        }
+        val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition) ?: return
+        startActivity(Intent(this, RotationActivity::class.java).putExtra("role", role).putExtra("peer", peer.id))
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -165,6 +195,7 @@ class MainActivity : Activity() {
         val selected = trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id
         runCatching { identity.desktops().filter { !it.revoked } }.onSuccess {
             trustedDesktops = it; trustError = ""
+            resumeKeyChange.visibility = if (identity.pendingRotation != null) android.view.View.VISIBLE else android.view.View.GONE
             desktops.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
                 it.map { peer -> peer.name }.ifEmpty { listOf("No paired desktop") })
             val index = it.indexOfFirst { peer -> peer.id == selected }
@@ -178,6 +209,7 @@ class MainActivity : Activity() {
         desktops.isEnabled = value.state == "Stopped"
         connectionStatus.text = when {
             trustError.isNotEmpty() -> trustError
+            runCatching { identity.pendingRotation != null }.getOrDefault(false) -> "Security key change pending. Resume or repair pairing before capture."
             trustedDesktops.isEmpty() -> "Connect your PC by scanning its QR."
             value.state == "Stopped" -> "Connected to ${trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "your PC"}. Ready to start."
             value.error.isNotEmpty() -> value.error

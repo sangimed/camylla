@@ -12,6 +12,67 @@ import org.json.JSONObject
 /** Opt-in hardware test: only consumes an explicitly prepared local invitation. Never starts capture. */
 @RunWith(AndroidJUnit4::class)
 class PairingHardwareTest {
+    @Test fun isolatedRotationRecoversLostAcknowledgementAndChangesBothKeys() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val originalPhone = ProductIdentity(context).phoneId
+        val directory = File(context.noBackupFilesDir, "rotation-test-${java.util.UUID.randomUUID()}").apply { mkdirs() }
+        val isolated = object : android.content.ContextWrapper(context) {
+            override fun getNoBackupFilesDir(): File = directory
+        }
+        val alias = "camylla-rotation-test-${java.util.UUID.randomUUID()}"
+        val identity = ProductIdentity(isolated, alias)
+        val file = File(context.filesDir, "pairing-invitation-test")
+        val invitation = PairInvitation.parse(file.readText().trim()); file.delete()
+        val pairing = PairClient(identity)
+        val peer = pairing.commit(pairing.begin(invitation, "Isolated S21 rotation test"))
+        val proposal = identity.newPhoneRotation(peer)
+        identity.persistRotation(proposal) // Explicit opt-in test authorization, no product UI auto-approval.
+        identity.socket(peer.host, 58413, peer.id).use { control ->
+            M4Wire.writeControl(control.outputStream, JSONObject().put("type", "rotate_offer").put("version", 3)
+                .put("role", "phone").put("old_id", proposal.oldId).put("new_id", proposal.newId)
+                .put("new_cert", proposal.newCertificate).put("rotation_id", proposal.rotationId).toString())
+            val pending = JSONObject(M4Wire.readControl(control.inputStream)); M4Wire.record(pending, "rotate_pending", "rotation_id")
+            var approved = false
+            for (attempt in 0 until 30) {
+                M4Wire.writeControl(control.outputStream, JSONObject().put("type", "rotation_status").put("version", 3)
+                    .put("rotation_id", proposal.rotationId).toString())
+                val state = JSONObject(M4Wire.readControl(control.inputStream)); M4Wire.record(state, "rotation_state", "rotation_id", "state")
+                if (state.getString("state") == "approved") { approved = true; break }
+                Thread.sleep(100)
+            }
+            assertTrue("Isolated desktop did not approve test proposal", approved)
+            identity.candidateIdentity(proposal).socket(peer.host, 58414, peer.id).use { proof ->
+                M4Wire.writeControl(proof.outputStream, JSONObject().put("type", "rotate_prove").put("version", 3)
+                    .put("role", "phone").put("old_id", proposal.oldId).put("new_id", proposal.newId)
+                    .put("rotation_id", proposal.rotationId).toString())
+                val ready = JSONObject(M4Wire.readControl(proof.inputStream)); M4Wire.record(ready, "rotate_ready", "rotation_id")
+            }
+            assertTrue(ProductIdentity(isolated).phoneId == proposal.oldId)
+            M4Wire.writeControl(control.outputStream, JSONObject().put("type", "rotate_commit").put("version", 3)
+                .put("rotation_id", proposal.rotationId).toString())
+            // Intentionally close without reading rotate_ok, then reload the protected pending state.
+        }
+        Thread.sleep(100)
+        RotationClient(isolated).resume()
+        val current = ProductIdentity(isolated)
+        assertTrue(current.phoneId == proposal.newId && current.privateKeyNonexportable && current.pendingRotation == null)
+        assertTrue(!java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(alias))
+        var desktop: PhoneRotation? = null
+        for (attempt in 0 until 20) {
+            val offer = runCatching { RotationClient(isolated).desktopOffer(peer) }
+            if (offer.isSuccess) { desktop = offer.getOrThrow(); break }
+            Thread.sleep(100)
+        }
+        val newPeer = RotationClient(isolated).execute(desktop ?: error("No isolated desktop proposal"))
+        val reloaded = ProductIdentity(isolated)
+        assertTrue(reloaded.desktops().any { it.id == peer.id && it.revoked })
+        assertTrue(reloaded.desktops().single { !it.revoked }.id == newPeer.id && newPeer.id != peer.id)
+        assertTrue(reloaded.pendingRotation == null && reloaded.phoneId == proposal.newId)
+        assertConnectionRejected { reloaded.socket(peer.host, 58413, peer.id) }
+        exerciseSession(reloaded, newPeer)
+        assertTrue("Isolated test modified real phone identity", ProductIdentity(context).phoneId == originalPhone)
+    }
+
     @Test fun scannerHasNoVisibleManualOrApprovalSteps() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

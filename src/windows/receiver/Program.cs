@@ -2,6 +2,46 @@ using System.Diagnostics;
 using Camylla.Receiver;
 
 if (args.Length == 1 && args[0] == "--pairing-self-test") { await ProductionSelfTest.RunAsync(); return; }
+if (args.Length == 1 && args[0] == "--rotation-self-test") { await ProductionSelfTest.RunRotationAsync(); return; }
+if (args.Length == 2 && args[0] == "--android-rotation-self-test")
+{
+    var testDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Camylla", "test-v3", "android-rotation-" + Guid.NewGuid().ToString("N"));
+    using var trust = new ProductionTrust(testDirectory);
+    using var hardware = new ReceiverHost(58413, 58414, trust);
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+    hardware.Log += Console.WriteLine;
+    var invitation = trust.BeginInvitation(ProductionTrust.LanAddress());
+    var file = Path.GetFullPath(args[1]);
+    if (File.Exists(file)) throw new IOException("Use a fresh hardware invitation file");
+    await File.WriteAllTextAsync(file, invitation.Uri);
+    var hardwareRun = hardware.RunAsync(deadline.Token);
+    string? originalPhone = null;
+    var desktopPrepared = false;
+    try
+    {
+        while (!deadline.IsCancellationRequested)
+        {
+            if (trust.Rotation is { Role: "phone", Approved: false } phone)
+            {
+                originalPhone = phone.OldId;
+                trust.ApproveRotation(phone.RotationId, true);
+                Console.WriteLine("Isolated hardware test approved phone key proposal");
+            }
+            if (!desktopPrepared && originalPhone != null && trust.Rotation == null &&
+                trust.Phones.FirstOrDefault(p => !p.Revoked && p.Id != originalPhone) is { } current)
+            {
+                var candidate = hardware.BeginDesktopRotation(current.Id);
+                trust.ApproveRotation(candidate.RotationId, true); desktopPrepared = true;
+                Console.WriteLine("Isolated hardware test prepared desktop key proposal");
+            }
+            await Task.Delay(50, deadline.Token);
+        }
+    }
+    catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+    finally { deadline.Cancel(); await hardwareRun; File.Delete(file); }
+    return;
+}
 if (args.Length == 2 && args[0] == "--android-pairing-self-test")
 {
     // Explicit local hardware harness. The capability is never printed or used to start capture.

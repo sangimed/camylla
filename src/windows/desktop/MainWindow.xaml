@@ -30,6 +30,12 @@
                 <Button Content="Revoke selected phone" Click="OnRevoke" />
             </StackPanel>
             <TextBlock x:Name="ConnectionHelp" TextWrapping="Wrap" />
+            <Expander Header="Security">
+                <StackPanel Spacing="8">
+                    <Button Content="Change PC key" Click="OnRotateDesktop" />
+                    <TextBlock x:Name="RotationStatusText" TextWrapping="Wrap" />
+                </StackPanel>
+            </Expander>
         </StackPanel>
         <TextBlock x:Name="DiagnosticsText" Grid.Row="3" TextWrapping="Wrap" />
         <ContentDialog x:Name="PairDialog" Title="Connect your phone" CloseButtonText="Close" Closed="OnPairClosed">

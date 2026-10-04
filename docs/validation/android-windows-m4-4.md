@@ -107,3 +107,26 @@ result is limited to authenticated session termination, not OBS visual behavior.
 After the tests, fresh pairing restored the S21's trust. Capture remains stopped;
 the next Start must still be performed by the phone user. No automatic capture,
 identity rotation, upgrade migration, or full #25 acceptance is claimed here.
+
+## Rotation implementation checkpoint (2026-10-04)
+
+Windows and Android rotation and interrupted-rotation repair are implemented
+on the feature branch, but are **not physically validated** yet.
+
+- Windows desktop build: zero warnings/errors (`desktop-repair-build.txt`).
+- Android debug APK, instrumentation APK and JVM tests build successfully
+  (`android-rotation-repair-final-build.txt`).
+- Windows TLS pairing tests pass, including changed-identity approval and
+  atomic old-identity revocation/persistence (`windows-replacement-test.txt`).
+- Windows real TLS rotation tests pass for phone and desktop identities,
+  approval, proof-port media rejection, single-use proof, reconnect, lost
+  acknowledgement, protected persistence, old-key rejection and expiry
+  (`windows-repair-rotation-test.txt`).
+- CI now runs the rotation self-test.
+- S21 isolated Keystore rotation test is prepared but **not run**. ADB reports
+  no attached device. New APKs have not been installed. Desktop remains closed.
+- Full device reboot persistence, physical rotation confirmation and complete
+  #25 acceptance remain pending. Existing OBS visual confirmation stands;
+  these protocol tests do not establish new visual or streaming performance results.
+
+No PR merge or full acceptance is claimed by this checkpoint.

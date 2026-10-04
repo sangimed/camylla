@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
-internal static class ProductionSelfTest
+internal static partial class ProductionSelfTest
 {
     public static async Task RunAsync()
     {
@@ -17,6 +17,28 @@ internal static class ProductionSelfTest
         using var phone = TestIdentity("Test phone");
         var phoneId = ProductionTrust.PeerId(phone);
         using var other = TestIdentity("Untrusted");
+        using (var replacement = new ProductionTrust(Path.Combine(directory, "replacement")))
+        {
+            SeedPhone(replacement, phone);
+            var invite = replacement.BeginInvitation("127.0.0.1");
+            var fields = new Uri(invite.Uri).Query.TrimStart('?').Split('&').Select(p => p.Split('=', 2))
+                .ToDictionary(p => p[0], p => Uri.UnescapeDataString(p[1]));
+            replacement.BeginChallenge(JsonSerializer.SerializeToElement(new { type = "pair_init", version = 3,
+                pair_id = invite.PairId, cap = fields["cap"], phone_id = ProductionTrust.PeerId(other),
+                client_cert = Convert.ToBase64String(other.RawData), name = "Rotation test phone" }), "127.0.0.1");
+            var candidate = replacement.Candidate!;
+            Check(candidate.ReplacesId == phoneId && !candidate.Approved, "changed identity requires PC approval");
+            var commit = JsonSerializer.SerializeToElement(new { type = "pair_commit", version = 3,
+                pair_id = invite.PairId, challenge_id = candidate.ChallengeId });
+            try { replacement.Commit(commit, candidate.Id); throw new Exception("Unapproved replacement accepted"); }
+            catch (AuthenticationException) { }
+            Check(replacement.IsTrusted(phoneId) && !replacement.IsTrusted(candidate.Id), "unapproved replacement preserves trust");
+            replacement.ApprovePairReplacement(candidate.ChallengeId, true);
+            replacement.Commit(commit, candidate.Id);
+            Check(!replacement.IsTrusted(phoneId) && replacement.IsTrusted(candidate.Id), "approved replacement atomically revokes old identity");
+            using var restored = new ProductionTrust(Path.Combine(directory, "replacement"));
+            Check(!restored.IsTrusted(phoneId) && restored.IsTrusted(candidate.Id), "replacement persists across reload");
+        }
         using (var timeTrust = new ProductionTrust(Path.Combine(directory, "expiry"), new TestClock()))
         {
             var clock = (TestClock)timeTrust.TestClock;
