@@ -1,0 +1,7 @@
+{
+    "service":  "FrameServer",
+    "pid":  13620,
+    "start":  "\/Date(1790972575723)\/",
+    "dll":  "D:\\Repositories\\camylla\\build\\src\\windows\\virtual-camera\\Release\\camylla_virtual_camera_source.dll",
+    "hash":  "790CE103819FD55BABE69B0251E27FC70700ABE8BC52B2741A4DAD3ED047AE99"
+}

@@ -1,0 +1,11 @@
+{
+  "utc": "2026-10-04T15:28:13.9147051Z",
+  "obsCloseRequested": true,
+  "obsExited": true,
+  "obsProfileRestored": "from_old_install",
+  "obsCollectionRestored": "NOVA profile",
+  "websocketEnabled": false,
+  "desktopCloseRequested": true,
+  "desktopExited": true,
+  "remainingListenerCount": 0
+}

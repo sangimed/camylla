@@ -10,6 +10,7 @@ namespace Camylla.Desktop;
 public sealed partial class MainWindow : Window
 {
     private readonly ReceiverHost receiver = new();
+    private readonly CameraPipePublisher cameraPublisher;
     private readonly CancellationTokenSource stop = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private WriteableBitmap? imageSource;
@@ -26,6 +27,8 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        cameraPublisher = new CameraPipePublisher(receiver);
+        cameraPublisher.Start();
         timer.Tick += OnTick;
         Closed += OnClosed;
         receiver.Log += message =>
@@ -40,7 +43,7 @@ public sealed partial class MainWindow : Window
             Directory.CreateDirectory(directory);
             diagnosticsLog = new StreamWriter(Path.Combine(directory, "m4-1-preview-diagnostics.csv"), false)
                 { AutoFlush = true };
-            diagnosticsLog.WriteLine("utc,state,receivedAU,decoded,displayed,superseded,queueDepth,queueHighWater,decoderErrors,networkErrors,width,height,stride,nv12ActiveBuffers,nv12BufferHighWater");
+            diagnosticsLog.WriteLine("utc,state,receivedAU,decoded,displayed,superseded,queueDepth,queueHighWater,decoderErrors,networkErrors,width,height,stride,nv12ActiveBuffers,nv12BufferHighWater,ipcLive,ipcNeutral,ipcErrors,ipcQueueDepth,ipcQueueHighWater,ipcCurrentFrame,ipcClients");
         }
         catch (IOException error) { Debug.WriteLine(error); }
         catch (UnauthorizedAccessException error) { Debug.WriteLine(error); }
@@ -121,6 +124,7 @@ public sealed partial class MainWindow : Window
                 $"· network errors {snapshot.NetworkErrors} · resets {snapshot.DecoderResets} " +
                 $"· NV12 {snapshot.Width}×{snapshot.Height}/stride {snapshot.Stride} " +
                 $"· active buffers {OwnedNv12Frame.ActiveBufferCount}/high-water {OwnedNv12Frame.BufferHighWater} " +
+                $"· camera IPC live {cameraPublisher.Published}/neutral {cameraPublisher.Neutral}/errors {cameraPublisher.Failures} " +
                 $"· last sequence {snapshot.LastSequence} · PTS {snapshot.LastPtsUs} µs";
             WriteDiagnostics(snapshot);
         }
@@ -142,6 +146,8 @@ public sealed partial class MainWindow : Window
             catch (OperationCanceledException) { }
             catch (Exception error) { Debug.WriteLine(error); }
         receiver.Dispose();
+        try { cameraPublisher.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        catch (Exception error) { Debug.WriteLine(error); }
         stop.Dispose();
         diagnosticsLog?.Dispose();
         ClearPreview();
@@ -155,7 +161,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (diagnosticsLog.BaseStream.Length >= 1_000_000) return;
-            diagnosticsLog.WriteLine(FormattableString.Invariant($"{DateTime.UtcNow:O},{snapshot.State},{snapshot.ReceivedAccessUnits},{snapshot.DecodedFrames},{displayed},{snapshot.SupersededPreviewFrames},{snapshot.FrameQueueDepth},{snapshot.FrameQueueHighWater},{snapshot.DecoderErrors},{snapshot.NetworkErrors},{snapshot.Width},{snapshot.Height},{snapshot.Stride},{OwnedNv12Frame.ActiveBufferCount},{OwnedNv12Frame.BufferHighWater}"));
+            diagnosticsLog.WriteLine(FormattableString.Invariant($"{DateTime.UtcNow:O},{snapshot.State},{snapshot.ReceivedAccessUnits},{snapshot.DecodedFrames},{displayed},{snapshot.SupersededPreviewFrames},{snapshot.FrameQueueDepth},{snapshot.FrameQueueHighWater},{snapshot.DecoderErrors},{snapshot.NetworkErrors},{snapshot.Width},{snapshot.Height},{snapshot.Stride},{OwnedNv12Frame.ActiveBufferCount},{OwnedNv12Frame.BufferHighWater},{cameraPublisher.Published},{cameraPublisher.Neutral},{cameraPublisher.Failures},{cameraPublisher.FrameQueueDepth},{cameraPublisher.FrameQueueHighWater},{cameraPublisher.CurrentFrameCount},{cameraPublisher.ActiveClients}"));
         }
         catch (IOException error) { Debug.WriteLine(error); diagnosticsLog.Dispose(); diagnosticsLog = null; }
     }

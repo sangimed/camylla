@@ -59,6 +59,14 @@ public sealed class OwnedNv12Frame : IDisposable
             return owner.Array.AsSpan(0, owner.Length);
         }
     }
+    internal ReadOnlyMemory<byte> PixelsMemory
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+            return owner.Array.AsMemory(0, owner.Length);
+        }
+    }
     public int Width { get; }
     public int Height { get; }
     public int Stride { get; }

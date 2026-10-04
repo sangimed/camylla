@@ -1,0 +1,4 @@
+"cycle","oldPid","closeRequested","exited","listenersAfterExit","newPid","state","ipcNeutral","ipcErrors","activeBuffers"
+"1","24072","True","True","0","10676","Disconnected","159","0","0"
+"2","10676","True","True","0","20800","Disconnected","158","0","0"
+"3","20800","True","True","0","22948","Disconnected","158","0","0"

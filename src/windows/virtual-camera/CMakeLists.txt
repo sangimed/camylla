@@ -1,5 +1,6 @@
 add_library(camylla_virtual_camera_core
     src/cadence.cpp
+    src/ipc_protocol.cpp
     src/synthetic_frame_provider.cpp
     src/video_mode.cpp
 )
@@ -18,12 +19,15 @@ if(WIN32)
         src/camylla_virtual_camera_source.def
         src/dll_main.cpp
         src/media_source.cpp
+        src/ipc_frame_provider.cpp
     )
     target_link_libraries(camylla_virtual_camera_source PRIVATE
         camylla_virtual_camera_core
         mfplat
         mf
         mfuuid
+        advapi32
+        wtsapi32
     )
     target_compile_features(camylla_virtual_camera_source PRIVATE cxx_std_20)
     target_compile_definitions(camylla_virtual_camera_source PRIVATE UNICODE _UNICODE)
@@ -48,6 +52,14 @@ if(WIN32)
         target_compile_options(camylla_virtual_camera_ctl PRIVATE /W4 /WX /permissive-)
     else()
         target_compile_options(camylla_virtual_camera_ctl PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+
+    add_executable(camylla_ipc_source_smoke tests/ipc_source_smoke.cpp src/ipc_frame_provider.cpp)
+    target_link_libraries(camylla_ipc_source_smoke PRIVATE camylla_virtual_camera_core advapi32 wtsapi32)
+    target_compile_features(camylla_ipc_source_smoke PRIVATE cxx_std_20)
+    target_compile_definitions(camylla_ipc_source_smoke PRIVATE UNICODE _UNICODE)
+    if(MSVC)
+        target_compile_options(camylla_ipc_source_smoke PRIVATE /W4 /WX /permissive-)
     endif()
 endif()
 

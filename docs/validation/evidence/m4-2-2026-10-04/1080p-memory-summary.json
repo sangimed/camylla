@@ -1,0 +1,14 @@
+[
+  {
+    "process": "Camylla.Desktop",
+    "privateMinMiB": 179.71484375,
+    "privateMaxMiB": 184.52734375,
+    "workingSetMaxMiB": 220.83203125
+  },
+  {
+    "process": "obs64",
+    "privateMinMiB": 229.44140625,
+    "privateMaxMiB": 229.875,
+    "workingSetMaxMiB": 242.4140625
+  }
+]

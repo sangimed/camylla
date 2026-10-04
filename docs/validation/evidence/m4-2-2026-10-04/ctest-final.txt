@@ -1,0 +1,9 @@
+Test project D:/Repositories/camylla-m4-2-virtual-camera-ipc/build
+    Start 1: camylla_protocol_tests
+1/2 Test #1: camylla_protocol_tests ..............   Passed    0.02 sec
+    Start 2: camylla_virtual_camera_core_tests
+2/2 Test #2: camylla_virtual_camera_core_tests ...   Passed    0.06 sec
+
+100% tests passed out of 2
+
+Total Test time (real) =   0.09 sec

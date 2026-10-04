@@ -1,0 +1,7 @@
+Owned NV12 frame and latest-frame handoff self-test passed
+NV12 stride and color conversion self-test passed
+Camera publisher shutdown with blocked UI context and connected client passed
+Camera IPC rejects anonymous principal: ERROR_ACCESS_DENIED (5)
+Slow camera IPC consumer: depth-one queues, bounded leases, independent live reader, malformed request rejection and shutdown passed
+Receiver start, shutdown, and same-port restart self-test passed
+Receiver wire self-test passed

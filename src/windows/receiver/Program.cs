@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Camylla.Receiver;
 
 if (args.Length == 1 && args[0] == "--self-test") { await SelfTest.RunAsync(); return; }
+if (args.Length == 1 && args[0] == "--ipc-host-smoke") { await SelfTest.IpcHostSmokeAsync(); return; }
 if (args.Length == 1 && args[0] == "--frame-memory-smoke") { SelfTest.FrameMemorySmoke(); return; }
 if (args.Length == 1 && args[0] == "--decoder-smoke") {
     using var decoder = new MfDecoder("1280x720@30");
