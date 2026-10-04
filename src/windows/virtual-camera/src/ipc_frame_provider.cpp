@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <WtsApi32.h>
+#include <aclapi.h>
 
 namespace camylla::virtual_camera {
 namespace {
@@ -13,12 +14,10 @@ constexpr wchar_t kPipePath[] = L"\\\\.\\pipe\\CamyllaFrameV1";
 constexpr std::uint64_t kOverallDeadlineMs = 300;
 
 bool IsTrustedDesktopServer(HANDLE pipe) {
-    ULONG pid = 0;
-    if (!GetNamedPipeServerProcessId(pipe, &pid)) return false;
     const DWORD console_session = WTSGetActiveConsoleSessionId();
-    DWORD server_session = 0;
+    ULONG server_session = 0;
     if (console_session == 0xFFFFFFFF ||
-        !ProcessIdToSessionId(pid, &server_session) || server_session != console_session) return false;
+        !GetNamedPipeServerSessionId(pipe, &server_session) || server_session != console_session) return false;
     LPWSTR user = nullptr;
     LPWSTR domain = nullptr;
     DWORD user_bytes = 0;
@@ -42,18 +41,15 @@ bool IsTrustedDesktopServer(HANDLE pipe) {
     std::vector<wchar_t> resolved_domain(domain_length);
     if (sid.empty() || !LookupAccountNameW(nullptr, account.c_str(), sid.data(), &sid_bytes,
                                            resolved_domain.data(), &domain_length, &kind)) return false;
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (process == nullptr) return false;
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(process, TOKEN_QUERY, &token)) { CloseHandle(process); return false; }
-    DWORD token_bytes = 0;
-    GetTokenInformation(token, TokenUser, nullptr, 0, &token_bytes);
-    std::vector<std::uint8_t> token_data(token_bytes);
-    const bool trusted = token_bytes != 0 &&
-        GetTokenInformation(token, TokenUser, token_data.data(), token_bytes, &token_bytes) &&
-        EqualSid(reinterpret_cast<const TOKEN_USER*>(token_data.data())->User.Sid, sid.data());
-    CloseHandle(token);
-    CloseHandle(process);
+    // The service can read the connected pipe's security metadata without obtaining
+    // TOKEN_QUERY on an unrelated desktop process. The producer explicitly sets its
+    // own user SID as the pipe owner; an unprivileged different user cannot assign it.
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    const DWORD result = GetSecurityInfo(pipe, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION,
+                                         &owner, nullptr, nullptr, nullptr, &descriptor);
+    const bool trusted = result == ERROR_SUCCESS && owner != nullptr && EqualSid(owner, sid.data());
+    if (descriptor != nullptr) LocalFree(descriptor);
     return trusted;
 }
 }

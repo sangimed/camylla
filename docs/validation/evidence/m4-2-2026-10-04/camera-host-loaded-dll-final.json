@@ -1,0 +1,7 @@
+{
+    "service":  "FrameServer",
+    "pid":  11380,
+    "start":  "\/Date(1791125008341)\/",
+    "dll":  "D:\\Repositories\\camylla-m4-2-virtual-camera-ipc\\build\\src\\windows\\virtual-camera\\Release\\camylla_virtual_camera_source.dll",
+    "hash":  "C815477C7DD59F3A2A2316D9C546971F7E1DEEF8541AB1B54DF8C1B7ACFE53F0"
+}

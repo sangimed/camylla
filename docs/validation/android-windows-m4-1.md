@@ -1,6 +1,6 @@
 # M4.1 Windows live preview validation
 
-**Status:** the issue #22 physical acceptance gate passed on the S21 Ultra / Windows setup on 2026-10-03, after correcting padded 1080p NV12 frame copying. The phone produces and the receiver decodes about 30 FPS; measured desktop presentation is slower (720p: 15.67–21.13 FPS in the seven recorded intervals). This is not a claim of 30 FPS presentation or broad device compatibility. PR #32 remains unmerged.
+**Status:** the issue #22 physical acceptance gate passed on the S21 Ultra / Windows setup on 2026-10-03, after correcting padded 1080p NV12 frame copying. The phone produces and the receiver decodes about 30 FPS; measured desktop presentation is slower (720p: 15.67–21.13 FPS in the seven recorded intervals). This is not a claim of 30 FPS presentation or broad device compatibility. PR #32 was merged on 2026-10-03. Subsequent camera publication validation is recorded in [M4.2](android-windows-m4-2.md).
 
 ## Architecture and frame contract
 

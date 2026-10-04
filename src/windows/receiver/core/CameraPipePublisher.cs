@@ -31,6 +31,10 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     public long Published => Interlocked.Read(ref published);
     public long Neutral => Interlocked.Read(ref neutral);
     public long Failures => Interlocked.Read(ref failures);
+    public int FrameQueueDepth => reader.Store.PendingDepth;
+    public int FrameQueueHighWater => reader.Store.HighWater;
+    public int CurrentFrameCount { get { lock (gate) return current == null ? 0 : 1; } }
+    public int ActiveClients { get { lock (clients) return clients.Count(task => !task.IsCompleted); } }
     public string? LastError => Volatile.Read(ref lastError);
 
     public CameraPipePublisher(ReceiverHost receiver) : this(receiver, () =>
@@ -198,7 +202,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
         var userSid = WindowsIdentity.GetCurrent().User?.Value ?? throw new UnauthorizedAccessException("No user SID");
         var frameServerSid = ((SecurityIdentifier)new NTAccount("NT SERVICE", "FrameServer")
             .Translate(typeof(SecurityIdentifier))).Value;
-        var sddl = $"D:P(A;;GA;;;{userSid})(A;;GA;;;SY)(A;;GA;;;{frameServerSid})";
+        var sddl = $"O:{userSid}D:P(A;;GA;;;{userSid})(A;;GA;;;SY)(A;;GA;;;{frameServerSid})";
         if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out var descriptor, out _))
             throw new IOException("Unable to create pipe security descriptor", Marshal.GetLastWin32Error());
         try
@@ -220,7 +224,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     {
         stop.Cancel();
         if (run != null)
-            try { await run; } catch (OperationCanceledException) { }
+            try { await run.ConfigureAwait(false); } catch (OperationCanceledException) { }
         reader.Dispose();
         stop.Dispose();
     }

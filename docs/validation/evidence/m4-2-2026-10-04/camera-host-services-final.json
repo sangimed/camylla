@@ -1,0 +1,14 @@
+[
+    {
+        "Name":  "FrameServer",
+        "State":  "Running",
+        "ProcessId":  11380,
+        "StartName":  "NT AUTHORITY\\LocalService"
+    },
+    {
+        "Name":  "FrameServerMonitor",
+        "State":  "Stopped",
+        "ProcessId":  0,
+        "StartName":  "LocalSystem"
+    }
+]

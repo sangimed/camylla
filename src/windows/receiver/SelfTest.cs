@@ -92,6 +92,9 @@ internal static class SelfTest
         TestOwnedLatestFrames();
         TestNv12Conversion();
         await TestCameraPipeAsync();
+        await TestPublisherUiShutdownAsync();
+        await TestAnonymousPipeRejectionAsync();
+        await TestSlowPipeConsumerAsync();
         await TestReceiverLifecycleAsync();
         var frame = new byte[Wire.VideoHeaderSize + 4];
         "CMYV"u8.CopyTo(frame);
@@ -428,6 +431,110 @@ internal static class SelfTest
         catch (InvalidDataException) { }
     }
 
+    private static async Task TestPublisherUiShutdownAsync()
+    {
+        using var host = new ReceiverHost();
+        var publisher = new CameraPipePublisher(host, () => (false, "none"));
+        publisher.Start();
+        using var client = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await client.ConnectAsync(3000);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new BlockedUiContext());
+            try { publisher.DisposeAsync().AsTask().GetAwaiter().GetResult(); completed.SetResult(); }
+            catch (Exception error) { completed.SetException(error); }
+            finally { SynchronizationContext.SetSynchronizationContext(null); }
+        }) { IsBackground = true };
+        thread.Start();
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Console.WriteLine("Camera publisher shutdown with blocked UI context and connected client passed");
+    }
+
+    private sealed class BlockedUiContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state) { }
+    }
+    private static async Task TestAnonymousPipeRejectionAsync()
+    {
+        using var host = new ReceiverHost();
+        await using var publisher = new CameraPipePublisher(host, () => (false, "none"));
+        publisher.Start();
+        // Ensure the named pipe exists before testing access; no await while impersonating.
+        using var trusted = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await trusted.ConnectAsync(3000);
+        await Task.Delay(50);
+        if (!ImpersonateAnonymousToken(new IntPtr(-2)))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var denied = false;
+        var error = 0;
+        try
+        {
+            using var handle = OpenPipeForAccessTest(@"\\.\pipe\" + CameraPipePublisher.PipeName,
+                0xC0000000, 0, IntPtr.Zero, 3, 0, IntPtr.Zero);
+            error = Marshal.GetLastWin32Error();
+            denied = handle.IsInvalid && error == 5;
+        }
+        finally
+        {
+            if (!RevertToSelf()) Environment.FailFast("Unable to revert anonymous test identity");
+        }
+        Check(denied, $"anonymous principal rejected by camera pipe DACL (Win32 error {error})");
+        Console.WriteLine("Camera IPC rejects anonymous principal: ERROR_ACCESS_DENIED (5)");
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool ImpersonateAnonymousToken(IntPtr thread);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool RevertToSelf();
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeFileHandle OpenPipeForAccessTest(
+        string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    private static async Task TestSlowPipeConsumerAsync()
+    {
+        var buffersBefore = OwnedNv12Frame.ActiveBufferCount;
+        using var host = new ReceiverHost();
+        var publisher = new CameraPipePublisher(host, () => (true, "slow-consumer-test"));
+        publisher.Start();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        using var slow = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await slow.ConnectAsync(timeout.Token);
+        var pixels = new byte[1280 * 720 * 3 / 2];
+        pixels.AsSpan().Fill(37);
+        using (var frame = OwnedNv12Frame.CopyFromManaged(pixels, 1280, 720, 1280, 1,
+                   Stopwatch.GetTimestamp())) host.PublishFrame(frame);
+        await Task.Delay(50, timeout.Token);
+        await slow.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        // Never drain this client's body: its write must not block decode or the other client.
+        await Task.Delay(50, timeout.Token);
+        for (var i = 0; i < 25; i++)
+        {
+            using (var frame = OwnedNv12Frame.CopyFromManaged(pixels, 1280, 720, 1280, i + 2,
+                       Stopwatch.GetTimestamp())) host.PublishFrame(frame);
+            await Task.Delay(10, timeout.Token);
+            Check(host.Frames.PendingDepth <= 1 && publisher.FrameQueueDepth <= 1 &&
+                publisher.CurrentFrameCount <= 1 && OwnedNv12Frame.ActiveBufferCount <= buffersBefore + 4,
+                "slow IPC reader keeps owned frames bounded");
+        }
+        using var fast = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            PipeDirection.InOut, PipeOptions.Asynchronous);
+        await fast.ConnectAsync(timeout.Token);
+        await fast.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        var header = new byte[CameraPipePublisher.HeaderBytes];
+        await fast.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 1, "fast IPC reader remains live alongside stalled reader");
+        var received = new byte[pixels.Length];
+        await fast.ReadExactlyAsync(received, timeout.Token);
+        Check(received.AsSpan().SequenceEqual(pixels), "fast reader gets valid bytes beside stalled reader");
+        await fast.WriteAsync("BAD1"u8.ToArray(), timeout.Token);
+        Check(await fast.ReadAsync(header, timeout.Token) == 0, "malformed IPC request closes connection");
+        await publisher.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        Check(publisher.CurrentFrameCount == 0, "shutdown releases current frame with stalled writer");
+        Console.WriteLine("Slow camera IPC consumer: depth-one queues, bounded leases, independent live reader, malformed request rejection and shutdown passed");
+    }
     private sealed class OneByteStream(byte[] data) : MemoryStream(data)
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
