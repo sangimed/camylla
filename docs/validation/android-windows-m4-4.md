@@ -41,8 +41,8 @@ general migration or rotation result.
 | Minimal Android scanner content | PASS, automated runtime | `phone-minimal-screen-test-2.txt`, completed `2026-10-04T17:07:00Z`; scanner title present; no visible manual inputs or approval/Finish buttons in app content |
 | Desktop QR dialog | Verified by UI Automation | Dialog content visible; connection options collapsed; does not depend on a dismissible button flyout |
 | Close QR dialog after pairing | PASS, automated hardware/UI Automation | `qr-autoclose-hardware-test.txt` and `qr-autoclose-ui-confirmation.txt`; S21 pairing succeeded and the dialog disappeared after its close animation. Closure is tied to the displayed invitation's successful trust commit, not merely decoding a QR or finding an existing trusted phone. |
-| User scan and resulting paired screen | **PENDING** | No user confirmation for the rebuilt UI yet |
-| Camera stream / preview after v3 pairing | **PENDING** | Protocol-only hardware tests do not prove visual streaming |
+| User scan and resulting paired screen | PASS, user confirmed | User confirmed the revised pairing flow with “c'est bon c'est mieux !” after the automatic QR dialog closure change. |
+| Camera stream / preview after v3 pairing | PASS, user confirmed for OBS | User stated that streaming with OBS works and requested skipping a repeat of that test. No new counters, performance measurements or restart/revocation results are inferred from this confirmation. |
 | Restart, revoke, missing/expired client, wrong server on S21 | **PENDING** | Windows regression results do not replace the physical gate |
 | Identity replacement and rotation transaction | **NOT IMPLEMENTED** | Required before issue #25 can pass |
 
