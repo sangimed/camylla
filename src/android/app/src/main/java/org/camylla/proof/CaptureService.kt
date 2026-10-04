@@ -98,21 +98,18 @@ class CaptureService : LifecycleService() {
                 }
                 sessionStartMs = SystemClock.elapsedRealtime()
                 snapshot = StatsSnapshot(state = "Starting", requestedMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
-                val host = intent.getStringExtra(EXTRA_HOST).orEmpty().trim()
-                val pin = intent.getStringExtra(EXTRA_PIN).orEmpty().trim()
-                val secret = intent.getStringExtra(EXTRA_SECRET).orEmpty().trim()
-                if (host.isNotEmpty() || pin.isNotEmpty() || secret.isNotEmpty()) {
-                    try {
-                        networkSender = NetworkSender(host, pin, secret, mode.label,
-                            if (lens == CameraSelector.LENS_FACING_BACK) "rear" else "front") {
-                            encoder?.requestSyncFrame()
-                        }
-                    } catch (error: Exception) {
-                        fail("Network setup: ${error.message}")
-                        endSession()
-                        stopSelf()
-                        return Service.START_NOT_STICKY
+                try {
+                    val identity = ProductIdentity(this)
+                    val peerId = intent.getStringExtra(EXTRA_PEER).orEmpty()
+                    val peer = identity.desktops().singleOrNull { it.id == peerId && !it.revoked }
+                        ?: throw IllegalStateException("Pair a desktop before starting capture")
+                    networkSender = NetworkSender(identity, peer, mode.label,
+                        if (lens == CameraSelector.LENS_FACING_BACK) "rear" else "front") {
+                        encoder?.requestSyncFrame()
                     }
+                } catch (error: Exception) {
+                    fail("Connection setup: ${error.message}")
+                    endSession(); stopSelf(); return Service.START_NOT_STICKY
                 }
                 orientationListener = object : OrientationEventListener(this) {
                     override fun onOrientationChanged(degrees: Int) {
@@ -336,8 +333,6 @@ class CaptureService : LifecycleService() {
         const val ACTION_STOP = "org.camylla.proof.STOP"
         const val EXTRA_MODE = "mode"
         const val EXTRA_LENS = "lens"
-        const val EXTRA_HOST = "host"
-        const val EXTRA_PIN = "pin"
-        const val EXTRA_SECRET = "secret"
+        const val EXTRA_PEER = "peer"
     }
 }

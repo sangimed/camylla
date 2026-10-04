@@ -1,6 +1,22 @@
 using System.Diagnostics;
 using Camylla.Receiver;
 
+if (args.Length == 1 && args[0] == "--pairing-self-test") { await ProductionSelfTest.RunAsync(); return; }
+if (args.Length == 2 && args[0] == "--android-pairing-self-test")
+{
+    // Explicit local hardware harness. The capability is never printed or used to start capture.
+    using var hardware = new ReceiverHost(production: true);
+    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+    hardware.Log += Console.WriteLine;
+    var invitation = hardware.Trust!.BeginInvitation(ProductionTrust.LanAddress());
+    var file = Path.GetFullPath(args[1]);
+    if (File.Exists(file)) throw new IOException("Use a fresh hardware invitation file");
+    await File.WriteAllTextAsync(file, invitation.Uri);
+    try { await hardware.RunAsync(deadline.Token); }
+    catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+    finally { File.Delete(file); }
+    return;
+}
 if (args.Length == 1 && args[0] == "--self-test") { await SelfTest.RunAsync(); return; }
 if (args.Length == 1 && args[0] == "--ipc-host-smoke") { await SelfTest.IpcHostSmokeAsync(); return; }
 if (args.Length == 1 && args[0] == "--frame-memory-smoke") { SelfTest.FrameMemorySmoke(); return; }
@@ -16,10 +32,14 @@ if (args.Length is 2 or 4 && args[0] == "--loopback-test") {
         args.Length == 4 ? int.Parse(args[3]) : 58414);
     return;
 }
-if (args.Length != 0 && (args.Length != 3 || args[0] != "--ports"))
-    throw new ArgumentException("Usage: Camylla.Receiver [--self-test|--frame-memory-smoke|--decoder-smoke|--decoder-file path|--loopback-test path [controlPort videoPort]|--ports controlPort videoPort]");
-using var host = args.Length == 3
-    ? new ReceiverHost(int.Parse(args[1]), int.Parse(args[2])) : new ReceiverHost();
+var development = args.Length > 0 && args[0] == "--development";
+var options = development ? args.Skip(1).ToArray() : args;
+if (options.Length != 0 && (options.Length != 3 || options[0] != "--ports"))
+    throw new ArgumentException("Usage: Camylla.Receiver [--development] [--ports controlPort videoPort] or an explicit self-test command");
+if (development) Console.WriteLine("M3 development diagnostic mode; not production pairing");
+using var host = options.Length == 3
+    ? new ReceiverHost(int.Parse(options[1]), int.Parse(options[2]), production: !development)
+    : new ReceiverHost(production: !development);
 using var stop = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
 var run = host.RunAsync(stop.Token);

@@ -22,12 +22,13 @@ object M3Wire {
     }
 
     fun video(sequence: Long, generation: Int, ptsUs: Long, sendUs: Long,
-              session: ByteArray, flag: Int, payload: ByteArray): ByteArray {
+              session: ByteArray, flag: Int, payload: ByteArray, version: Int = VERSION): ByteArray {
         require(session.size == 16 && flag in listOf(KEY, CONFIG, NORMAL))
         require(payload.isNotEmpty() && payload.size <= MAX_VIDEO_BYTES)
         return ByteBuffer.allocate(HEADER_BYTES + payload.size).order(ByteOrder.BIG_ENDIAN).apply {
             put(byteArrayOf('C'.code.toByte(), 'M'.code.toByte(), 'Y'.code.toByte(), 'V'.code.toByte()))
-            put(VERSION.toByte()); put(0.toByte())
+            require(version == 2 || version == 3)
+            put(version.toByte()); put(0.toByte())
             putShort(HEADER_BYTES.toShort())
             putInt(payload.size)
             putLong(sequence)

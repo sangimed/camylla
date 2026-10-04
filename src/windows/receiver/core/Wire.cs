@@ -26,7 +26,9 @@ internal static class Wire
         if (length is 0 or > MaxControlBytes) throw new InvalidDataException("Invalid control length");
         var payload = new byte[length];
         await stream.ReadExactlyAsync(payload, ct);
-        return JsonDocument.Parse(payload);
+        var document = JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 4 });
+        try { RejectDuplicateKeys(document.RootElement); return document; }
+        catch { document.Dispose(); throw; }
     }
 
     public static async Task WriteControlAsync(Stream stream, object value, CancellationToken ct)
@@ -40,11 +42,11 @@ internal static class Wire
         await stream.FlushAsync(ct);
     }
 
-    public static async Task<VideoUnit> ReadVideoAsync(Stream stream, CancellationToken ct)
+    public static async Task<VideoUnit> ReadVideoAsync(Stream stream, CancellationToken ct, int version = Version)
     {
         var header = new byte[VideoHeaderSize];
         await stream.ReadExactlyAsync(header, ct);
-        if (!header.AsSpan(0, 4).SequenceEqual("CMYV"u8) || header[4] != Version || header[5] != 0 ||
+        if (!header.AsSpan(0, 4).SequenceEqual("CMYV"u8) || header[4] != version || header[5] != 0 ||
             BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(6)) != VideoHeaderSize)
             throw new InvalidDataException("Unsupported video header or version");
         var length = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(8));
@@ -67,6 +69,20 @@ internal static class Wire
         catch { ArrayPool<byte>.Shared.Return(payload); throw; }
     }
 
+    private static void RejectDuplicateKeys(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!seen.Add(property.Name)) throw new InvalidDataException("Duplicate control field");
+                RejectDuplicateKeys(property.Value);
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+            foreach (var item in value.EnumerateArray()) RejectDuplicateKeys(item);
+    }
     public static string RequiredString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? throw new InvalidDataException($"Missing {name}")
