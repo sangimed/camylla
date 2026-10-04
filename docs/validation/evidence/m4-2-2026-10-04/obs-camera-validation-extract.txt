@@ -8,13 +8,13 @@
 16:43:27.459: [obs-websocket] [obs_module_load] Qt version (compile-time): 6.11.1 | Qt version (run-time): 6.11.1
 16:43:27.459: [obs-websocket] [obs_module_load] Linked ASIO Version: 103200
 16:43:28.230:     - source: 'Camylla M4.2 camera' (dshow_input)
-16:43:29.563: [DShow Device: 'Camylla M4.2 camera'] settings updated: 
+16:43:29.563: [DShow Device: 'Camylla M4.2 camera'] settings updated:
 16:43:29.563: 	video device: Camylla POC (Windows Virtual Camera)
 16:43:29.563: 	resolution: 1280x720
 16:43:29.563: 	fps: 30.00 (interval: 333333)
 16:43:29.563: 	format: NV12
 16:43:29.563: 	buffering: disabled
-16:58:09.647: [DShow Device: 'Camylla M4.2 camera'] settings updated: 
+16:58:09.647: [DShow Device: 'Camylla M4.2 camera'] settings updated:
 16:58:09.647: 	video device: Camylla POC (Windows Virtual Camera)
 16:58:09.647: 	resolution: 1920x1080
 16:58:09.647: 	fps: 30.00 (interval: 333333)
