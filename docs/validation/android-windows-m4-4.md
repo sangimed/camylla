@@ -130,3 +130,27 @@ on the feature branch, but are **not physically validated** yet.
   these protocol tests do not establish new visual or streaming performance results.
 
 No PR merge or full acceptance is claimed by this checkpoint.
+
+## Xiaomi tablet rotation hardware result (2026-10-05)
+
+Device: Xiaomi 2405CPCFBG, Android 16 / API 36, ADB serial d3ec6d70.
+LAN: desktop 192.168.1.236, tablet Wi-Fi 192.168.1.193.
+Both debug and instrumentation APKs installed successfully without clearing data.
+
+The first attempt failed before pairing: traffic originated from VPN interface
+10.111.3.51 and timed out. Its instrumentation, Windows and logcat evidence are
+retained. After the user disabled the VPN, the same still-valid isolated receiver
+invitation was used without restarting the receiver or clearing logs.
+
+`tablet-rotation-instrumentation-no-vpn-20261005.txt` reports **OK (1 test)**.
+The opt-in isolated test passed Android Keystore phone-key rotation, lost
+`rotate_ok` recovery after protected-state reload, retirement of the old test key,
+Windows server-key rotation, old server-pin rejection, and control/video binding
+and Stop with both new identities. The real app identity remained unchanged.
+Windows evidence: `tablet-rotation-windows-20261005.txt`; Android logcat evidence:
+`tablet-logcat-rotation-no-vpn-20261005.txt`.
+
+This is tablet protocol evidence, not an S21 rotation result. The harness explicitly
+approved isolated test proposals; normal product confirmation UI, optical QR scan,
+full device reboot persistence and complete #25 acceptance remain pending.
+No camera or OBS visual PASS is inferred from this test.
