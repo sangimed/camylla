@@ -34,10 +34,20 @@ internal static partial class ProductionSelfTest
             catch (AuthenticationException) { }
             Check(replacement.IsTrusted(phoneId) && !replacement.IsTrusted(candidate.Id), "unapproved replacement preserves trust");
             replacement.ApprovePairReplacement(candidate.ChallengeId, true);
+            string? retired = null;
+            replacement.PeerRevoked += id => retired = id;
             replacement.Commit(commit, candidate.Id);
+            Check(retired == phoneId, "replacement notifies active-session retirement");
             Check(!replacement.IsTrusted(phoneId) && replacement.IsTrusted(candidate.Id), "approved replacement atomically revokes old identity");
             using var restored = new ProductionTrust(Path.Combine(directory, "replacement"));
             Check(!restored.IsTrusted(phoneId) && restored.IsTrusted(candidate.Id), "replacement persists across reload");
+            var repeated = replacement.BeginInvitation("127.0.0.1");
+            var repeatedFields = new Uri(repeated.Uri).Query.TrimStart('?').Split('&').Select(p => p.Split('=', 2))
+                .ToDictionary(p => p[0], p => Uri.UnescapeDataString(p[1]));
+            replacement.BeginChallenge(JsonSerializer.SerializeToElement(new { type = "pair_init", version = 3,
+                pair_id = repeated.PairId, cap = repeatedFields["cap"], phone_id = candidate.Id,
+                client_cert = Convert.ToBase64String(other.RawData), name = "Rotation test phone" }), "127.0.0.1");
+            Check(replacement.Candidate is { Approved: true, ReplacesId: null }, "known current identity re-pairs automatically despite retired same-name keys");
         }
         using (var timeTrust = new ProductionTrust(Path.Combine(directory, "expiry"), new TestClock()))
         {

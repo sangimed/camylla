@@ -133,7 +133,11 @@ class PairActivity : ComponentActivity() {
                     }
                     phase = "certificate proof"
                     check(!destroyed) { "Pairing cancelled" }
-                    client.commit(pair)
+                    val known = identity.desktops()
+                    val previous = if (known.any { it.id == invite.desktopId }) null else known.filter { it.id != invite.desktopId && it.name == pair.desktopName }
+                        .sortedWith(compareBy<TrustedDesktop> { it.revoked }.thenByDescending { it.updatedAt }).firstOrNull()
+                    if (previous != null) confirmDesktopReplacement(previous, pair)
+                    client.commit(pair, previous?.id)
                 }
                 result.onFailure { error ->
                     android.util.Log.w("CamyllaTrust", "Pairing failed phase=$phase exception=${error.javaClass.simpleName}")
@@ -152,6 +156,26 @@ class PairActivity : ComponentActivity() {
                 }
             }
         } catch (_: Exception) { status.text = "Invalid or expired invitation. Scan a fresh PC QR." }
+    }
+    private fun confirmDesktopReplacement(previous: TrustedDesktop, pair: PendingPair) {
+        val decision = java.util.concurrent.CountDownLatch(1)
+        val approved = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = java.util.concurrent.atomic.AtomicReference<android.app.AlertDialog>()
+        runOnUiThread {
+            if (destroyed) { decision.countDown(); return@runOnUiThread }
+            dialog.set(android.app.AlertDialog.Builder(this)
+                .setTitle("Replace this PC's identity?")
+                .setMessage("PC: ${pair.desktopName}\n\nPrevious fingerprint:\n${previous.id}\n\nNew fingerprint:\n${pair.invitation.desktopId}\n\nOnly approve a change you requested. The previous PC identity will be revoked locally.")
+                .setPositiveButton("Approve replacement") { _, _ -> approved.set(true); decision.countDown() }
+                .setNegativeButton("Cancel") { _, _ -> decision.countDown() }
+                .setOnCancelListener { decision.countDown() }.show())
+        }
+        try {
+            val remaining = (30_000 - (android.os.SystemClock.elapsedRealtime() - pair.startedAt)).coerceAtLeast(0)
+            check(decision.await(remaining, java.util.concurrent.TimeUnit.MILLISECONDS) && approved.get() && !destroyed) {
+                "PC replacement cancelled or expired"
+            }
+        } finally { runOnUiThread { dialog.get()?.dismiss() } }
     }
     private fun busy(value: Boolean) { begin.isEnabled = !value; scan.isEnabled = !value; invitation.isEnabled = !value; address.isEnabled = !value }
     override fun onDestroy() { destroyed = true; provider?.unbindAll(); executor.shutdownNow(); super.onDestroy() }

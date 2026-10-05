@@ -122,7 +122,7 @@ public sealed partial class ProductionTrust : IDisposable
                 !CryptographicOperations.FixedTimeEquals(invite.Hash, SHA256.HashData(Convert.FromHexString(cap))))
                 throw new AuthenticationException("pair_rejected");
             invitation = null; // Consume before any response, including an interrupted response.
-            var previous = database.Phones.Where(p => p.Id != phoneId && p.Name == name)
+            var previous = database.Phones.Any(p => p.Id == phoneId) ? null : database.Phones.Where(p => p.Id != phoneId && p.Name == name)
                 .OrderBy(p => p.Revoked).ThenByDescending(p => p.Updated).FirstOrDefault();
             challenge = new(pairId, RandomHex(16), phoneId, name, certText, clock.GetTimestamp(), previous?.Id, previous == null);
             return new { type = "pair_challenge", version = 3, pair_id = pairId,
@@ -146,6 +146,8 @@ public sealed partial class ProductionTrust : IDisposable
     internal object Commit(JsonElement value, string authenticatedPhone)
     {
         V3Record.Require(value, "pair_commit", "pair_id", "challenge_id");
+        string? replaced;
+        object response;
         lock (gate)
         {
             var c = ValidChallenge();
@@ -158,8 +160,12 @@ public sealed partial class ProductionTrust : IDisposable
             phones.Add(new(c.PhoneId, c.Name, c.Certificate, false, DateTimeOffset.UtcNow));
             var next = database with { Phones = phones };
             Save(next); database = next; completedPairId = c.PairId; challenge = null;
-            return new { type = "pair_ok", version = 3, desktop_id = DesktopId, phone_id = authenticatedPhone };
+            replaced = c.ReplacesId;
+            response = new { type = "pair_ok", version = 3, desktop_id = DesktopId, phone_id = authenticatedPhone };
         }
+        // Notify outside the trust lock: receiver shutdown takes the session gate.
+        if (replaced != null) PeerRevoked?.Invoke(replaced);
+        return response;
     }
     public void ApprovePairReplacement(string challengeId, bool approved)
     {

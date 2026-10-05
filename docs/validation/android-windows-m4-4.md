@@ -49,7 +49,7 @@ general migration or rotation result.
 | Missing/expired client and wrong server pin on S21 | PASS, automated hardware | `invalid-identities-hardware-test.txt`, three tests; both ports checked, including a genuinely expired certificate on a temporary nonexportable Keystore key |
 | Fresh re-pair after revocation | PASS, automated hardware | `repair-after-revocation-test.txt` and `trust-restored-final-test.txt`; fresh one-use invitations restored trust through certificate proof; test authorization supplied privately over ADB, not an optical scan |
 | Immediate bind/Stop acknowledgement | PASS after correction, automated hardware | Three subsequent successful runs in `quick-stop-regression-1.txt` through `quick-stop-regression-3.txt`; final receiver snapshot Disconnected, queue/buffers zero, decoder/network errors zero |
-| Identity replacement and rotation transaction | **NOT IMPLEMENTED** | Required before issue #25 can pass |
+| Identity replacement and rotation transaction | PASS, automated protocol and tablet hardware for rotation | Changed-identity approval/revocation tested on Windows; normal phone and desktop key rotation user-confirmed on Xiaomi tablet, authenticated sessions and restart checks passed. See dated results below; S21 rotation and full reboot are not claimed. |
 
 Local evidence is preserved under
 `D:\Repositories\camylla\validation-artifacts\m4-4`. Failure logs were not cleared
@@ -209,3 +209,22 @@ verified through UI Automation; its build had zero warnings/errors. This indicat
 saved trust and stopped capture, not continuous network presence. The tablet UI
 reported readiness to start. User visual confirmation of automatic QR-dialog
 closure remains unrecorded; no additional OBS preview claim is made.
+
+## PR review checkpoint (2026-10-05)
+
+Initial PR #35 CI run 37359383127 passed both Android and Windows jobs, including
+wire, pairing, rotation, decoder, frame memory and native tests. Review then
+strengthened identity replacement: Windows now notifies active-session retirement
+after durable replacement commit; Android explicitly reviews old/new PC identity
+when a fresh QR replaces a known same-name PC, atomically revoking old local trust.
+Re-pairing a known unchanged identity remains automatic despite retired same-name
+keys. Focused Windows pairing/rotation regressions pass, Android builds/JVM tests
+pass, desktop build has zero warnings/errors. Latest installed APKs retain trust.
+
+The review does not claim physical confirmation of the exceptional PC-identity
+replacement dialog. Automatic QR closure has automated evidence and prior general
+user approval, but no explicit tablet visual statement. Full reboot is deferred to
+#34. Normal production flow never imports M3 development trust; first production
+use requires fresh QR pairing. A one-time legacy migration explanation and explicit
+cleanup of retained development identity files remain unimplemented design details.
+These limitations remain visible in the draft PR; #25 is not closed here.
