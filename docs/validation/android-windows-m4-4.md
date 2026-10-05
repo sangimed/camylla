@@ -154,3 +154,11 @@ This is tablet protocol evidence, not an S21 rotation result. The harness explic
 approved isolated test proposals; normal product confirmation UI, optical QR scan,
 full device reboot persistence and complete #25 acceptance remain pending.
 No camera or OBS visual PASS is inferred from this test.
+
+The user confirmed optical QR pairing on the tablet. Automatic QR-dialog closure
+has not yet been explicitly visually confirmed. Normal product trust committed
+in `receiver-v3-20261005-184344-33f168ef.log`. The follow-up instrumentation test
+`rememberedTrustConnectsWithoutInvitation` passed **OK (1 test)** in
+`tablet-remembered-connection-20261005.txt`: nonexportable Android key,
+TLS 1.3 control/video authentication, one-use video binding and Stop without
+opening the camera. This does not claim a new visual preview or frame-rate result.
