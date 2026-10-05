@@ -22,13 +22,38 @@
                            FontSize="22" Foreground="White" />
             </Grid>
         </Border>
-        <StackPanel Grid.Row="2" Spacing="4">
-            <TextBlock Text="Development connection setup" FontWeight="SemiBold" />
-            <TextBlock Text="Enter this PC's LAN address, certificate pin, and secret in the Android proof app. Start capture on the phone." TextWrapping="Wrap" />
-            <TextBlock Text="Control port 58413 · Video port 58414" />
-            <TextBox x:Name="PinBox" Header="Certificate SHA-256 pin" IsReadOnly="True" />
-            <TextBox x:Name="SecretBox" Header="Development session secret" IsReadOnly="True" />
+        <StackPanel Grid.Row="2" Spacing="6">
+            <TextBlock Text="Start capture on your paired phone." />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Pair a phone" Click="OnPair" />
+                <ComboBox x:Name="TrustedPhonesBox" PlaceholderText="Trusted phones" MinWidth="240" />
+                <Button Content="Revoke selected phone" Click="OnRevoke" />
+            </StackPanel>
+            <TextBlock x:Name="ConnectionHelp" TextWrapping="Wrap" />
+            <Expander Header="Security">
+                <StackPanel Spacing="8">
+                    <Button x:Name="LegacyCleanupButton" Content="Remove old connection credentials" Click="OnRemoveLegacyCredentials" Visibility="Collapsed" />
+                    <Button Content="Change PC key" Click="OnRotateDesktop" />
+                    <TextBlock x:Name="RotationStatusText" TextWrapping="Wrap" />
+                </StackPanel>
+            </Expander>
         </StackPanel>
         <TextBlock x:Name="DiagnosticsText" Grid.Row="3" TextWrapping="Wrap" />
+        <ContentDialog x:Name="PairDialog" Title="Connect your phone" CloseButtonText="Close" Closed="OnPairClosed">
+            <StackPanel Spacing="12">
+                <TextBlock Text="Open Camylla on your phone and scan this QR." TextWrapping="Wrap" />
+                <Image x:Name="PairQr" Width="280" Height="280" />
+                <TextBlock x:Name="PairStatus" TextWrapping="Wrap" />
+                <Button Content="Refresh QR" Click="OnPair" />
+                <Expander Header="Connection options">
+                    <StackPanel Spacing="8">
+                        <TextBox x:Name="LanAddressBox" Header="PC LAN address" />
+                        <TextBlock x:Name="DesktopFingerprint" TextWrapping="Wrap" />
+                        <TextBox x:Name="InvitationBox" Header="Manual invitation" IsReadOnly="True" TextWrapping="Wrap" />
+                        <TextBlock x:Name="CandidateText" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </ContentDialog>
     </Grid>
 </Window>

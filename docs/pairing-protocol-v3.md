@@ -1,6 +1,6 @@
 # M4 production pairing and authenticated sessions (proposed v3)
 
-Status: reviewable specification for #24. **Not implemented.** The M3 v2 wire format and development pin/secret remain the running proof until a later implementation issue migrates both endpoints atomically. This document defines a new major version because a v2 peer must fail closed rather than silently accept a production peer with different authentication.
+Status: reviewed design for #24, implemented on the #25 feature branch. Normal Android/desktop operation uses v3; v2 development credentials require the explicit CLI development mode. Physical rotation validation is still pending. See `validation/android-windows-m4-4.md` for the exact evidence and remaining gates. This document defines a new major version because a v2 peer must fail closed rather than silently accept a production peer with different authentication.
 
 ## Roles, identities, and cryptography
 
@@ -24,11 +24,11 @@ Platform references: [Android Keystore key generation](https://developer.android
 
 1. The desktop user opens Pair. Windows generates a fresh 32-byte pairing capability `cap` and random 16-byte `pair_id`; it records only a hash of `cap`, creation time and expiry, and displays one QR. The QR is visible for at most 120 seconds. At most one active invitation exists per desktop user; opening a new one invalidates the old one. The desktop must show its real listening address and firewall state, not a discovery-advertised address.
 2. The QR encodes a `camylla-pair://v3` URI with `host`, `control_port=58413`, `desktop_id`, `pair_id`, `cap`, and `expires_at` (UTC Unix seconds). UTF-8 URI length is at most 512 bytes; `host` is a DNS name of at most 253 ASCII bytes, bracketed IPv6 literal, or IPv4 literal. `cap` is 64 lowercase hex characters; `pair_id` is 32. The endpoint is a hint. The phone may replace it with a manually entered LAN address while retaining the scanned identity and capability. If scanning is unavailable, the Windows screen displays the same 256-bit capability as grouped base32 text plus the full desktop fingerprint for manual entry. Entering only an address or accepting a discovery result never authorizes pairing.
-3. The phone user chooses Pair, scans or enters the invitation, and sees desktop name/address/fingerprint. It connects over TLS and pins the server SPKI to `desktop_id` **before** sending `cap`. An address redirect, discovery spoof, or wrong certificate fails before capability disclosure. The phone generates its Android Keystore identity before this step.
+3. The phone user chooses Pair and scans the invitation. The scan authorizes pairing and automatically completes certificate proof without additional approval or Finish buttons. Manual invitation entry has one Pair action. It connects over TLS and pins the server SPKI to `desktop_id` **before** sending `cap`. An address redirect, discovery spoof, or wrong certificate fails before capability disclosure. The phone generates its Android Keystore identity before this step.
 4. Over this pinned TLS connection, the phone sends `pair_init` with `pair_id`, `cap`, its client certificate (DER, base64), `phone_id`, and bounded friendly name. The desktop atomically compares capability hash, expiry, state, and pair ID, then marks the invitation **consumed before** responding. A second `pair_init`, even after interruption, receives `pair_consumed`; the user must open a fresh invitation. The desktop verifies that the supplied SPKI hashes to `phone_id` and requires the next TLS connection to prove possession through client-certificate authentication before committing trust. The pending `phone_id` may be accepted by the TLS validation callback **only** for this challenge, not as general trust.
-5. Desktop responds `pair_challenge` with random 16-byte `challenge_id`, expiry at most 30 seconds, and its current server certificate. The phone opens a new pinned mutual-TLS control connection presenting its certificate and sends `pair_commit` with `pair_id` and `challenge_id`. Windows verifies the same phone certificate/SPKI, unexpired challenge, and the consumed invitation, then atomically stores phone trust and responds `pair_ok` containing both IDs. The phone commits desktop trust only after validating `pair_ok` on the same mutual-TLS connection. If the response is lost, either side may hold one-sided trust; a fresh invitation and re-pair replaces it. A consumed invitation is never restored after crash or timeout.
+5. Desktop responds `pair_challenge` with random 16-byte `challenge_id`, expiry at most 30 seconds, its current server certificate, and bounded desktop `name`. The phone opens a new pinned mutual-TLS control connection presenting its certificate and sends `pair_commit` with `pair_id` and `challenge_id`. Windows verifies the same phone certificate/SPKI, unexpired challenge, and the consumed invitation, then atomically stores phone trust and responds `pair_ok` containing both IDs. The phone commits desktop trust only after validating `pair_ok` on the same mutual-TLS connection. If the response is lost, either side may hold one-sided trust; a fresh invitation and re-pair replaces it. A consumed invitation is never restored after crash or timeout.
 
-Pairing grants remembered trust only; it never authorizes capture or starts the camera. `pair_init` is allowed only on a dedicated pairing control TLS connection pinned by the QR, without a client certificate; all other unauthenticated message types are rejected. No pairing messages are accepted on the video listener. The desktop permits at most one pending challenge per invitation and five failed pairing attempts per source IP per 10 minutes, plus five globally per minute. Rate limiting is defense in depth, not identity; it may cause a visible `rate_limited` error and must not silently lengthen an authorization's lifetime. Do not log or echo the capability. Windows closes pairing listeners when Pair is dismissed or expired. The desktop user can cancel an invitation at any time. A candidate phone is shown for review before `pair_commit` trust becomes active; desktop rejection consumes the invitation. This local approval limits accidental QR disclosure.
+Pairing grants remembered trust only; it never authorizes capture or starts the camera. `pair_init` is allowed only on a dedicated pairing control TLS connection pinned by the QR, without a client certificate; all other unauthenticated message types are rejected. No pairing messages are accepted on the video listener. The desktop permits at most one pending challenge per invitation and five failed pairing attempts per source IP per 10 minutes, plus five globally per minute. Rate limiting is defense in depth, not identity; it may cause a visible `rate_limited` error and must not silently lengthen an authorization's lifetime. Do not log or echo the capability. Windows closes pairing listeners when Pair is dismissed or expired. The desktop user can cancel an invitation at any time. Opening the QR on the desktop and scanning it on the phone constitute pairing approval. Possession of this temporary capability permits one pairing within its expiry. Dismissing the QR cancels pending proof. Ordinary pairing never silently revokes another remembered identity; replacement and rotation retain explicit review.
 
 ## Repeat use and active session
 
@@ -70,7 +70,7 @@ Example records (illustrative placeholders, not usable secrets):
 
 ```json
 {"type":"pair_init","version":3,"pair_id":"<32 hex>","cap":"<64 hex>","phone_id":"<64 hex>","client_cert":"<base64 DER>","name":"My S21 Ultra"}
-{"type":"pair_challenge","version":3,"pair_id":"<32 hex>","challenge_id":"<32 hex>","server_cert":"<base64 DER>"}
+{"type":"pair_challenge","version":3,"pair_id":"<32 hex>","challenge_id":"<32 hex>","server_cert":"<base64 DER>","name":"<desktop name>"}
 {"type":"pair_commit","version":3,"pair_id":"<32 hex>","challenge_id":"<32 hex>"}
 {"type":"pair_ok","version":3,"desktop_id":"<64 hex>","phone_id":"<64 hex>"}
 {"type":"start","version":3,"phone_id":"<64 hex>","client_nonce":"<32 hex>","codec":"h264","modes":["1280x720@30"],"mode":"1280x720@30","lens":"rear"}
@@ -110,3 +110,31 @@ State transitions: desktop `unpaired -> invitation -> challenge -> paired -> act
 | Lost video socket | Fresh `video_rebind` ticket on live control only, then sync frame; no stale queued frames replayed. |
 
 Implementation tests should cover both Android and Windows parsers/state machines, real TLS mutual-auth against generated test identities, certificate replacement/revocation, persistence under user scope, and incompatible v2/v3 attempts. A required #25 integration acceptance test uses a real Android 10+ device (including the S21 Ultra target): generate a nonexportable Android Keystore P-256 identity, present it through the selected `KeyManager`/`SSLContext` to Windows `SslStream` on **both control and video sockets**, verify pinned server and client SPKIs, then reconnect both sockets and restart both apps using persisted trust. Repeat with missing/revoked/expired client keys and wrong server pin; each must fail closed without exporting the key or falling back to the M3 secret. Record Android version, TLS version, certificate and KeyManager provider behavior, and Windows build. Physical S21 Ultra/Windows firewall and manual-address UX validation belongs to M4.4; this specification alone claims no device pass.
+
+## Implementation additions for changed identity and interrupted rotation
+
+Manual fallback implementation uses the complete invitation URI, pasted under
+Android's "Can't scan?", with optional routing-address override. This supersedes
+the proposed grouped-base32 entry described above; the same identity, capability,
+expiry and strict bounds apply. Ordinary QR pairing remains the primary flow.
+Phone and desktop rotation passed on the Xiaomi tablet. Full Android reboot
+validation is deferred to #34; S21 rotation is not claimed.
+
+`pair_challenge` also carries `requires_approval` (boolean) and
+`previous_phone_id` (null for ordinary pairing, previous 64-character SPKI ID
+for a same-name identity replacement). Friendly names are only a prompt to
+review a possible replacement, never proof of identity. Windows displays old
+and new fingerprints and requires approval before atomically revoking the old
+identity and committing the new one. Android waits automatically using a
+mutual-TLS `pair_status` record with `pair_id` and `challenge_id`;
+`pair_state` returns `challenge_id` and state `awaiting_approval` or `approved`.
+The same 30-second challenge deadline applies. Ordinary QR pairing needs no
+additional approval and closes the PC QR dialog on successful commit.
+
+Rotation status may be `awaiting_approval`, `approved`, `ready`, `committed`,
+or `expired`. The phone's Resume action probes the proposed identity first.
+Explicit Repair pairing revokes all locally saved PCs, clears the pending
+transaction atomically, and requires a fresh QR. For a pending phone-key change
+it retains the proposed nonexportable key and retires the previous key after
+local persistence, avoiding an old-key fallback when remote commit is uncertain.
+Neither resume nor repair starts capture.

@@ -9,7 +9,7 @@ namespace Camylla.Desktop;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly ReceiverHost receiver = new();
+    private readonly ReceiverHost receiver = new(production: true);
     private readonly CameraPipePublisher cameraPublisher;
     private readonly CancellationTokenSource stop = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(33) };
@@ -22,6 +22,8 @@ public sealed partial class MainWindow : Window
     private string lastSessionId = "none";
     private string? lastError;
     private StreamWriter? diagnosticsLog;
+    private StreamWriter? receiverEventLog;
+    private readonly object eventLogGate = new();
     private long lastLogTicks;
 
     public MainWindow()
@@ -29,19 +31,35 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         cameraPublisher = new CameraPipePublisher(receiver);
         cameraPublisher.Start();
+        LanAddressBox.Text = ProductionTrust.LanAddress();
+        DesktopFingerprint.Text = $"Desktop fingerprint: {receiver.Trust!.DesktopId}";
+        LegacyCleanupButton.Visibility = LegacyMigration.CredentialsPresent ? Visibility.Visible : Visibility.Collapsed;
+        try
+        {
+            if (LegacyMigration.TakeUpgradeNotice())
+                ConnectionHelp.Text = "Connection setup has changed. Scan the PC QR to pair again; old connection credentials are not imported. You can remove them in Security.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Debug.WriteLine(error); }
         timer.Tick += OnTick;
         Closed += OnClosed;
         receiver.Log += message =>
         {
             if (!message.StartsWith("Development session secret:", StringComparison.Ordinal))
+            {
                 Debug.WriteLine(message);
+                lock (eventLogGate) receiverEventLog?.WriteLine($"{DateTime.UtcNow:O} {message}");
+            }
         };
         try
         {
             var directory = Path.Combine(Environment.GetFolderPath(
                 Environment.SpecialFolder.LocalApplicationData), "Camylla");
             Directory.CreateDirectory(directory);
-            diagnosticsLog = new StreamWriter(Path.Combine(directory, "m4-1-preview-diagnostics.csv"), false)
+            var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8];
+            var csvPath = Path.Combine(directory, $"preview-v3-{stamp}.csv");
+            File.WriteAllText(Path.Combine(directory, "last-preview-path.txt"), csvPath);
+            receiverEventLog = new StreamWriter(Path.Combine(directory, $"receiver-v3-{stamp}.log"), false) { AutoFlush = true };
+            diagnosticsLog = new StreamWriter(csvPath, false)
                 { AutoFlush = true };
             diagnosticsLog.WriteLine("utc,state,receivedAU,decoded,displayed,superseded,queueDepth,queueHighWater,decoderErrors,networkErrors,width,height,stride,nv12ActiveBuffers,nv12BufferHighWater,ipcLive,ipcNeutral,ipcErrors,ipcQueueDepth,ipcQueueHighWater,ipcCurrentFrame,ipcClients");
         }
@@ -114,9 +132,9 @@ public sealed partial class MainWindow : Window
             if (!fresh) ClearPreview();
             StateText.Text = lastError != null ? $"Receiver error: {lastError}" :
                 fresh ? $"Streaming · {snapshot.Width} × {snapshot.Height}" :
+                snapshot.State == "Disconnected" && receiver.Trust!.Phones.Any(p => !p.Revoked) ? "Phone paired · Capture stopped" :
                 $"Waiting for phone · {snapshot.State}";
-            PinBox.Text = receiver.CertificatePin;
-            SecretBox.Text = receiver.DevelopmentSecret;
+            UpdatePairingUi();
             DiagnosticsText.Text =
                 $"Received AU {snapshot.ReceivedAccessUnits} · decoded {snapshot.DecodedFrames} · displayed {displayed} " +
                 $"· superseded {snapshot.SupersededPreviewFrames} · queue {snapshot.FrameQueueDepth}/1 " +
@@ -150,6 +168,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { Debug.WriteLine(error); }
         stop.Dispose();
         diagnosticsLog?.Dispose();
+        lock (eventLogGate) { receiverEventLog?.Dispose(); receiverEventLog = null; }
         ClearPreview();
     }
 

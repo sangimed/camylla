@@ -29,24 +29,23 @@ internal fun NetworkProgress.streamed(recoveries: Long) = copy(
 
 /** One explicit phone-started session. Socket work is confined to worker/control threads. */
 class NetworkSender(
-    private val host: String, pinHex: String, private val secret: String,
+    private val identity: ProductIdentity, private val peer: TrustedDesktop,
     private val mode: String, private val lens: String,
     private val requestSyncFrame: () -> Unit,
 ) : AutoCloseable {
     private data class PendingUnit(val payload: ByteArray, val ptsUs: Long, val flag: Int,
                                    val queuedNs: Long, val generation: Int)
     private val lock = Object()
+    private val controlWrite = Any()
     private val retryWaiter = RetryWaiter()
     @Volatile private var activeHeartbeat: ControlHeartbeat? = null
-    private val queue = RecoveryQueue<PendingUnit>({ it.payload.size }, { it.flag == M3Wire.CONFIG })
-    private val pin = parsePin(pinHex)
-    private val tls = SSLContext.getInstance("TLS").apply {
-        init(null, arrayOf<TrustManager>(PinnedTrust(pin)), null)
-    }.socketFactory
+    private val queue = RecoveryQueue<PendingUnit>({ it.payload.size }, { it.flag == M4Wire.CONFIG })
+    private val host = peer.host
     private val worker = Thread(::run, "camylla-network-writer")
     @Volatile private var stopping = false
     @Volatile private var videoSocket: SSLSocket? = null
     @Volatile private var controlSocket: SSLSocket? = null
+    @Volatile private var sessionId: String? = null
     @Volatile private var connectingSocket: Socket? = null
     @Volatile private var progress = NetworkProgress()
     private var config: ByteArray? = null
@@ -56,7 +55,7 @@ class NetworkSender(
     private var sequence = 0L
 
     init {
-        require(host.isNotBlank() && secret.length == 64 && secret.all { it.digitToIntOrNull(16) != null })
+        require(host.isNotBlank() && !peer.revoked && identity.desktops().any { it.id == peer.id && !it.revoked })
         require(mode in listOf("1280x720@30", "1920x1080@30") && lens in listOf("rear", "front"))
         worker.start()
     }
@@ -70,7 +69,7 @@ class NetworkSender(
     }
 
     fun codecConfig(bytes: ByteArray) = synchronized(lock) {
-        if (bytes.isNotEmpty() && bytes.size <= M3Wire.MAX_VIDEO_BYTES) {
+        if (bytes.isNotEmpty() && bytes.size <= M4Wire.MAX_VIDEO_BYTES) {
             val changed = config != null && !config!!.contentEquals(bytes)
             config = bytes.copyOf()
             if (changed) {
@@ -87,7 +86,7 @@ class NetworkSender(
             progress = progress.copy(droppedFrames = progress.droppedFrames + 1)
             return@synchronized
         }
-        if (bytes.isEmpty() || bytes.size > M3Wire.MAX_VIDEO_BYTES) { resetLocked(); return@synchronized }
+        if (bytes.isEmpty() || bytes.size > M4Wire.MAX_VIDEO_BYTES) { resetLocked(); return@synchronized }
         val now = SystemClock.elapsedRealtimeNanos()
         if (!queue.isEmpty && now - queue.first.queuedNs > MAX_AGE_NS ||
             queue.size + 2 > MAX_DEPTH || queue.bytes + bytes.size + (if (syncGate.waitingForKey) config?.size ?: 0 else 0) > MAX_QUEUE_BYTES) {
@@ -98,9 +97,9 @@ class NetworkSender(
                 progress = progress.copy(droppedFrames = progress.droppedFrames + 1)
                 return@synchronized
             }
-            transportGate.enqueue(queue, PendingUnit(config!!.copyOf(), ptsUs, M3Wire.CONFIG, now, generation))
+            transportGate.enqueue(queue, PendingUnit(config!!.copyOf(), ptsUs, M4Wire.CONFIG, now, generation))
         }
-        transportGate.enqueue(queue, PendingUnit(bytes, ptsUs, if (key) M3Wire.KEY else M3Wire.NORMAL, now, generation))
+        transportGate.enqueue(queue, PendingUnit(bytes, ptsUs, if (key) M4Wire.KEY else M4Wire.NORMAL, now, generation))
         progress = progress.copy(queuedFrames = progress.queuedFrames + 1,
             depth = queue.size, highWater = maxOf(progress.highWater, queue.size),
             keyframes = progress.keyframes + if (key) 1 else 0)
@@ -132,24 +131,28 @@ class NetworkSender(
                 val control = connect(CONTROL_PORT)
                 controlSocket = control
                 progress = progress.copy(state = "Authenticating")
-                val hello = JSONObject().put("type", "hello").put("version", M3Wire.VERSION)
+                val hello = JSONObject().put("type", "start").put("version", M4Wire.VERSION)
                     .put("codec", "h264").put("mode", mode).put("lens", lens)
                     .put("modes", JSONArray(listOf("1280x720@30", "1920x1080@30")))
-                    .put("secret", secret)
-                M3Wire.writeControl(control.outputStream, hello.toString())
-                val welcome = JSONObject(M3Wire.readControl(control.inputStream))
-                if (welcome.optString("type") != "welcome" || welcome.optInt("version") != M3Wire.VERSION ||
+                    .put("phone_id", identity.phoneId).put("client_nonce", ProductIdentity.randomHex(16))
+                writeControl(control, hello.toString())
+                val welcome = JSONObject(M4Wire.readControl(control.inputStream))
+                if (welcome.optString("type") != "started" || welcome.optInt("version") != M4Wire.VERSION ||
                     welcome.optString("mode") != mode || welcome.optString("codec") != "h264" ||
                     welcome.optInt("fps") != 30)
-                    throw IllegalStateException("Capability negotiation rejected: $welcome")
-                val id = M3Wire.hex16(welcome.getString("session"))
+                    throw IllegalStateException("Capability negotiation rejected")
+                M4Wire.record(welcome, "started", "session_id", "client_nonce", "server_nonce", "video_ticket", "codec", "mode", "fps")
+                require(welcome.getString("client_nonce") == hello.getString("client_nonce"))
+                PairInvitation.hex(welcome.getString("server_nonce"), 16); PairInvitation.hex(welcome.getString("video_ticket"), 32)
+                sessionId = welcome.getString("session_id")
+                val id = M4Wire.hex16(sessionId!!)
                 progress = progress.copy(state = "Negotiating")
                 val lastPong = java.util.concurrent.atomic.AtomicLong(SystemClock.elapsedRealtime())
                 val heartbeat = ControlHeartbeat(
                     HEARTBEAT_MS, HEARTBEAT_TIMEOUT_MS, SystemClock::elapsedRealtime,
                     { !stopping && !control.isClosed && controlSocket === control },
                     lastPong::get,
-                    { M3Wire.writeControl(control.outputStream, "{\"type\":\"ping\"}") },
+                    { writeControl(control, "{\"type\":\"ping\",\"version\":3}") },
                 )
                 sessionHeartbeat = heartbeat
                 activeHeartbeat = heartbeat
@@ -159,11 +162,14 @@ class NetworkSender(
                 if (control.isClosed) throw java.io.IOException("Control session closed")
                 val video = connect(VIDEO_PORT)
                 videoSocket = video
-                val bind = JSONObject().put("type", "bind").put("version", M3Wire.VERSION)
-                    .put("session", welcome.getString("session")).put("secret", secret)
-                M3Wire.writeControl(video.outputStream, bind.toString())
-                val ready = JSONObject(M3Wire.readControl(video.inputStream))
-                if (ready.optString("type") != "ready" || ready.optString("session") != welcome.getString("session"))
+                val bind = JSONObject().put("type", "bind").put("version", M4Wire.VERSION)
+                    .put("session_id", welcome.getString("session_id")).put("phone_id", identity.phoneId)
+                    .put("client_nonce", welcome.getString("client_nonce")).put("server_nonce", welcome.getString("server_nonce"))
+                    .put("video_ticket", welcome.getString("video_ticket"))
+                M4Wire.writeControl(video.outputStream, bind.toString())
+                val ready = JSONObject(M4Wire.readControl(video.inputStream))
+                M4Wire.record(ready, "ready", "session_id")
+                if (ready.optString("type") != "ready" || ready.optString("session_id") != welcome.getString("session_id"))
                     throw IllegalStateException("Video channel binding rejected")
                 if (control.isClosed) throw java.io.IOException("Control session closed")
                 synchronized(lock) {
@@ -185,9 +191,9 @@ class NetworkSender(
                     }
                     val next = ++sequence
                     val sendUs = SystemClock.elapsedRealtimeNanos() / 1000
-                    val packet = M3Wire.video(next, unit.generation, unit.ptsUs, sendUs, id, unit.flag, unit.payload)
+                    val packet = M4Wire.video(next, unit.generation, unit.ptsUs, sendUs, id, unit.flag, unit.payload)
                     video.outputStream.write(packet)
-                    progress = progress.copy(sentFrames = progress.sentFrames + if (unit.flag == M3Wire.CONFIG) 0 else 1,
+                    progress = progress.copy(sentFrames = progress.sentFrames + if (unit.flag == M4Wire.CONFIG) 0 else 1,
                         sentBytes = progress.sentBytes + packet.size, lastSequence = next)
                 }
                 if (!stopping) throw java.io.IOException("Control or video channel closed")
@@ -230,11 +236,11 @@ class NetworkSender(
                             heartbeat: ControlHeartbeat) {
         try {
             while (!stopping && !control.isClosed) {
-                val message = JSONObject(M3Wire.readControl(control.inputStream))
+                val message = JSONObject(M4Wire.readControl(control.inputStream))
                 when (message.optString("type")) {
-                    "sync" -> synchronized(lock) { resetLocked(closeVideo = false) }
-                    "pong" -> lastPong.set(SystemClock.elapsedRealtime())
-                    "error" -> throw IllegalStateException(message.optString("message", "Receiver error"))
+                    "sync" -> { M4Wire.record(message, "sync"); synchronized(lock) { resetLocked(closeVideo = false) } }
+                    "pong" -> { M4Wire.record(message, "pong"); lastPong.set(SystemClock.elapsedRealtime()) }
+                    "error" -> throw IllegalStateException(message.optString("code", "Receiver rejected session"))
                     else -> throw IllegalStateException("Unknown control message")
                 }
             }
@@ -248,21 +254,16 @@ class NetworkSender(
     }
 
     private fun connect(port: Int): SSLSocket {
-        val plain = Socket()
-        connectingSocket = plain
-        try {
-            plain.tcpNoDelay = true
-            plain.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-            val socket = tls.createSocket(plain, host, port, true) as SSLSocket
-            socket.enabledProtocols = socket.supportedProtocols.filter { it == "TLSv1.2" || it == "TLSv1.3" }.toTypedArray()
-            socket.soTimeout = CONNECT_TIMEOUT_MS
-            socket.startHandshake()
-            socket.soTimeout = HEARTBEAT_TIMEOUT_MS.toInt()
-            return socket
-        } catch (error: Exception) { plain.close(); throw error }
-        finally { if (connectingSocket === plain) connectingSocket = null }
+        // Trust is rechecked on every recovery; a local revocation stops new connections.
+        require(identity.desktops().any { it.id == peer.id && !it.revoked }) { "Desktop trust revoked" }
+        val socket = identity.socket(host, port, peer.id)
+        if (stopping) { socket.close(); throw java.io.IOException("Capture stopped") }
+        socket.soTimeout = HEARTBEAT_TIMEOUT_MS.toInt()
+        return socket
     }
-
+    private fun writeControl(control: SSLSocket, json: String) = synchronized(controlWrite) {
+        M4Wire.writeControl(control.outputStream, json)
+    }
     private fun reportError(message: String) {
         Log.e("CamyllaProof", message)
         progress = progress.copy(networkErrors = progress.networkErrors + 1, error = message)
@@ -275,20 +276,17 @@ class NetworkSender(
         synchronized(lock) { queue.clear(); lock.notifyAll() }
         runCatching { connectingSocket?.close() }
         runCatching { videoSocket?.close() }
+        val control = controlSocket
+        val session = sessionId
+        if (control != null && session != null) {
+            val stopNotice = Thread({
+                runCatching { writeControl(control, JSONObject().put("type", "stop").put("version", 3).put("session_id", session).toString()) }
+                runCatching { control.close() }
+            }, "camylla-stop-notice").apply { isDaemon = true; start() }
+            stopNotice.join(200)
+        }
         runCatching { controlSocket?.close() }
         worker.join(2000)
-    }
-
-    private class PinnedTrust(private val pin: ByteArray) : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
-            throw CertificateException("Client certificates are not used")
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-            val leaf = chain?.firstOrNull() ?: throw CertificateException("Missing receiver certificate")
-            leaf.checkValidity()
-            if (!MessageDigest.isEqual(MessageDigest.getInstance("SHA-256").digest(leaf.encoded), pin))
-                throw CertificateException("Receiver certificate pin mismatch")
-        }
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
     companion object {
@@ -300,10 +298,5 @@ class NetworkSender(
         private const val MAX_DEPTH = 4
         private const val MAX_QUEUE_BYTES = 8 * 1024 * 1024
         private const val MAX_AGE_NS = 250_000_000L
-        private fun parsePin(value: String): ByteArray {
-            val clean = value.replace(":", "").trim()
-            require(clean.length == 64) { "Certificate pin must be 64 hex characters" }
-            return ByteArray(32) { index -> clean.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
-        }
     }
 }

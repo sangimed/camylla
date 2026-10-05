@@ -10,7 +10,7 @@ using System.Text.Json;
 
 namespace Camylla.Receiver;
 
-public sealed class ReceiverHost : IDisposable
+public sealed partial class ReceiverHost : IDisposable
 {
     private readonly int ControlPort;
     private readonly int VideoPort;
@@ -59,22 +59,31 @@ public sealed class ReceiverHost : IDisposable
     public string DevelopmentSecret { get; private set; } = "";
     public event Action<string>? Log;
 
-    public ReceiverHost(int controlPort = 58413, int videoPort = 58414)
+    public ProductionTrust? Trust { get; }
+    public ReceiverHost(int controlPort = 58413, int videoPort = 58414, bool production = false)
     {
         if (controlPort is < 1 or > 65535 || videoPort is < 1 or > 65535 || controlPort == videoPort)
             throw new ArgumentException("Invalid listener ports");
         ControlPort = controlPort;
         VideoPort = videoPort;
+        if (production) { Trust = new ProductionTrust(); Trust.PeerRevoked += RevokeSession; }
+    }
+    internal ReceiverHost(int controlPort, int videoPort, ProductionTrust trust) : this(controlPort, videoPort)
+    {
+        Trust = trust; Trust.PeerRevoked += RevokeSession;
     }
 
     public async Task RunAsync(CancellationToken ct)
     {
         if (running != null) throw new InvalidOperationException("Receiver already running");
-        using var certificate = DevelopmentIdentity.LoadOrCreate();
-        CertificatePin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
-        DevelopmentSecret = DevelopmentIdentity.LoadOrCreateSecret();
-        Report($"Development certificate SHA-256 pin: {CertificatePin}");
-        Report($"Development session secret: {DevelopmentSecret}");
+        using var certificate = Trust != null ? new X509Certificate2(Trust.Certificate) : DevelopmentIdentity.LoadOrCreate();
+        if (Trust == null)
+        {
+            CertificatePin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
+            DevelopmentSecret = DevelopmentIdentity.LoadOrCreateSecret();
+            Report($"Development certificate SHA-256 pin: {CertificatePin}");
+            Report($"Development session secret: {DevelopmentSecret}");
+        }
         Report($"Control TLS/TCP port {ControlPort}; video TLS/TCP port {VideoPort}");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         running = linked;
@@ -152,6 +161,7 @@ public sealed class ReceiverHost : IDisposable
     private async Task HandleControlAsync(TcpClient client, X509Certificate2 certificate,
         string token, CancellationToken ct)
     {
+        if (Trust != null) { await HandleProductionControlAsync(client, certificate, ct); return; }
         using (client)
         using (var tls = new SslStream(client.GetStream(), false))
         {
@@ -249,12 +259,23 @@ public sealed class ReceiverHost : IDisposable
     private async Task HandleVideoAsync(TcpClient client, X509Certificate2 certificate,
         string token, CancellationToken ct)
     {
+        if (Trust?.Rotation is { } rotation)
+        { await HandleRotationProofAsync(client, rotation, ct); return; }
+        if (Trust != null && !productionConnections.Wait(0)) { client.Dispose(); return; }
         using (client)
         using (var tls = new SslStream(client.GetStream(), false))
         {
             Session? session = null;
             try
             {
+                string id;
+                if (Trust != null)
+                {
+                    session = await AuthenticateProductionVideoAsync(tls, client, certificate, ct);
+                    id = session.Id;
+                }
+                else
+                {
                 await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions {
                     ServerCertificate = certificate, EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
                 }, ct);
@@ -263,14 +284,16 @@ public sealed class ReceiverHost : IDisposable
                 if (Wire.RequiredString(value, "type") != "bind" || Wire.RequiredInt(value, "version") != Wire.Version ||
                     !Wire.FixedHexEquals(Wire.RequiredString(value, "secret"), token))
                     throw new AuthenticationException("Video authentication failed");
-                var id = Wire.RequiredString(value, "session");
+                id = Wire.RequiredString(value, "session");
                 lock (Gate)
                 {
                     if (active == null || !Wire.FixedHexEquals(active.Id, id) || !active.TryBindVideo())
                         throw new AuthenticationException("Video/control session mismatch or duplicate video channel");
                     session = active;
                 }
-                await Wire.WriteControlAsync(tls, new { type = "ready", session = id }, ct);
+                }
+                await Wire.WriteControlAsync(tls, Trust == null ? (object)new { type = "ready", session = id }
+                    : new { type = "ready", version = 3, session_id = id }, ct);
                 Interlocked.Increment(ref reconnects);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, session.Token);
                 using var decoder = new MfDecoder(session.Mode, frame => PublishSessionFrame(session, frame));
@@ -279,13 +302,13 @@ public sealed class ReceiverHost : IDisposable
                 uint generation = 0;
                 ulong? previous = null;
                 var needsKey = true;
-                await session.SendAsync(new { type = "sync" }, linked.Token);
+                await session.SendAsync(new { type = "sync", version = Trust == null ? 2 : 3 }, linked.Token);
                 Report($"Video bound session={id} peer={client.Client.RemoteEndPoint}");
                 while (!linked.IsCancellationRequested)
                 {
                     using var messageTimeout = CancellationTokenSource.CreateLinkedTokenSource(linked.Token);
                     messageTimeout.CancelAfter(TimeSpan.FromSeconds(2));
-                    using var unit = await Wire.ReadVideoAsync(tls, messageTimeout.Token);
+                    using var unit = await Wire.ReadVideoAsync(tls, messageTimeout.Token, Trust == null ? 2 : 3);
                     Wire.RequireBoundSession(unit.SessionId, session.Id);
                     Interlocked.Increment(ref received);
                     lastSequence = unit.Sequence;
@@ -296,7 +319,7 @@ public sealed class ReceiverHost : IDisposable
                     {
                         decoder.Reset(); Interlocked.Increment(ref decoderResets);
                         config = null; needsKey = true;
-                        await session.SendAsync(new { type = "sync" }, linked.Token);
+                        await session.SendAsync(new { type = "sync", version = Trust == null ? 2 : 3 }, linked.Token);
                     }
                     previous = unit.Sequence;
                     if (unit.Flags == Wire.Config)
@@ -309,7 +332,7 @@ public sealed class ReceiverHost : IDisposable
                     {
                         decoder.Reset(); Interlocked.Increment(ref decoderResets);
                         config = null; needsKey = true;
-                        await session.SendAsync(new { type = "sync" }, linked.Token);
+                        await session.SendAsync(new { type = "sync", version = Trust == null ? 2 : 3 }, linked.Token);
                         continue;
                     }
                     int decodedNow;
@@ -347,23 +370,27 @@ public sealed class ReceiverHost : IDisposable
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested || session?.Token.IsCancellationRequested == true) { }
+            catch (Exception error) when ((error is IOException or SocketException) &&
+                (ct.IsCancellationRequested || session?.Token.IsCancellationRequested == true)) { }
             catch (OperationCanceledException)
             {
                 Report("Video read timeout; closing stale channel");
                 Interlocked.Increment(ref networkErrors);
             }
-            catch (Exception error) when (error is IOException or AuthenticationException or InvalidDataException or InvalidOperationException or SocketException or ExternalException)
+            catch (Exception error) when (error is IOException or AuthenticationException or InvalidDataException or InvalidOperationException or SocketException or ExternalException or JsonException or FormatException or CryptographicException)
             {
                 Report($"Video: {error.Message}");
                 if (error is ExternalException) Interlocked.Increment(ref decoderErrors);
                 else Interlocked.Increment(ref networkErrors);
                 if (tls.IsAuthenticated)
-                    try { await Wire.WriteControlAsync(tls, new { type = "error", message = error.Message }, ct); }
+                    try { await Wire.WriteControlAsync(tls, Trust == null ? (object)new { type = "error", message = error.Message }
+                        : new { type = "error", version = 3, code = ProductionError(error) }, ct); }
                     catch (Exception) { }
             }
             finally
             {
-                session?.UnbindVideo();
+                if (Trust != null) EndProductionVideo(session, client); else session?.UnbindVideo();
+                if (Trust != null) productionConnections.Release();
                 lock (Gate) if (active == session) ClearFrames();
             }
         }
@@ -399,6 +426,14 @@ internal sealed class Session(string id, string mode, string lens, string peer, 
     {
         await sendGate.WaitAsync(ct);
         try { await Wire.WriteControlAsync(control, message, ct); }
+        finally { sendGate.Release(); }
+    }
+    public async Task StopAndSendAsync(object message, CancellationToken ct)
+    {
+        // Finish an in-flight sync record before cancellation, then serialize the Stop acknowledgement.
+        // Cancelling a TLS write and reusing that stream can corrupt its next record.
+        await sendGate.WaitAsync(ct);
+        try { Stop(); await Wire.WriteControlAsync(control, message, ct); }
         finally { sendGate.Release(); }
     }
 }
