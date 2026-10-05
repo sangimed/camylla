@@ -228,3 +228,40 @@ user approval, but no explicit tablet visual statement. Full reboot is deferred 
 use requires fresh QR pairing. A one-time legacy migration explanation and explicit
 cleanup of retained development identity files remain unimplemented design details.
 These limitations remain visible in the draft PR; #25 is not closed here.
+
+## Legacy migration and exceptional PC replacement checkpoint
+
+Windows now presents a one-time upgrade explanation when obsolete development
+credential files exist; cleanup is an explicit Security action with confirmation.
+Only development-secret.txt and receiver-dev-identity.pfx are removed, with no
+import into production trust. Cleanup is idempotent and tested on isolated files:
+logs and current production identity are preserved. Android shows a one-time
+upgrade explanation for an updated unpaired app. The previous Android proof kept
+pin/secret only in transient text fields; no persisted credential preferences
+exist to migrate or remove. Desktop and Android builds and focused pairing tests
+pass (`migration-desktop-build.txt`, `migration-android-build.txt`,
+`migration-cleanup-regression.txt`). Live legacy files have not been deleted.
+
+The exceptional Android old/new PC identity dialog cancellation test was blocked
+by tablet keyguard, not a protocol failure: `tablet-replacement-dialog-cancel-20261005.txt`
+reports failure to access the dialog; window/logcat evidence shows locked system UI.
+This failed result is retained. The installed APKs preserve production trust;
+unlocked-device UI cancellation validation is still pending. No visual PASS claimed.
+
+## Unlocked exceptional-dialog result (2026-10-05)
+
+`tablet-replacement-dialog-cancel-unlocked-20261005.txt` reports **OK (1 test)**.
+The real Android replacement-review dialog exposed both old/new fingerprints,
+Cancel aborted approval, and encrypted trust remained exactly unchanged. This
+runtime UI check uses a synthetic proposal without any network commit; it is not
+user visual confirmation or an end-to-end replacement claim. The locked-device
+failure remains retained. The follow-up remembered mutual-TLS control/video and
+Stop test passed **OK (1 test)** (`tablet-final-migration-trust-20261005.txt`).
+
+#25 acceptance evidence now covers first QR pairing, focused fail-closed cases,
+app-process/receiver restart and explicit Start authority, revocation, protected
+rotation/re-pair, and rejection of address-only authorization. Migration UI and
+explicit narrowly scoped credential cleanup are implemented and tested. The
+complete-device reboot is deferred to #34. Latest changes require a fresh CI
+result and PR review; #25 remains open pending that review. No unconfirmed visual
+check is promoted to PASS.

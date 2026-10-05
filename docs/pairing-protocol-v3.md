@@ -113,6 +113,13 @@ Implementation tests should cover both Android and Windows parsers/state machine
 
 ## Implementation additions for changed identity and interrupted rotation
 
+Manual fallback implementation uses the complete invitation URI, pasted under
+Android's "Can't scan?", with optional routing-address override. This supersedes
+the proposed grouped-base32 entry described above; the same identity, capability,
+expiry and strict bounds apply. Ordinary QR pairing remains the primary flow.
+Phone and desktop rotation passed on the Xiaomi tablet. Full Android reboot
+validation is deferred to #34; S21 rotation is not claimed.
+
 `pair_challenge` also carries `requires_approval` (boolean) and
 `previous_phone_id` (null for ordinary pairing, previous 64-character SPKI ID
 for a same-name identity replacement). Friendly names are only a prompt to

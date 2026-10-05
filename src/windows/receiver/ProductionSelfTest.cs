@@ -17,6 +17,17 @@ internal static partial class ProductionSelfTest
         using var phone = TestIdentity("Test phone");
         var phoneId = ProductionTrust.PeerId(phone);
         using var other = TestIdentity("Untrusted");
+        var legacy = Path.Combine(directory, "legacy-cleanup"); Directory.CreateDirectory(legacy);
+        File.WriteAllText(Path.Combine(legacy, "development-secret.txt"), "test-only obsolete secret");
+        File.WriteAllText(Path.Combine(legacy, "receiver-dev-identity.pfx"), "test-only obsolete identity");
+        File.WriteAllText(Path.Combine(legacy, "preserved.log"), "failure evidence");
+        var currentDesktop = trust.DesktopId;
+        LegacyMigration.RemoveCredentialsFrom(legacy);
+        LegacyMigration.RemoveCredentialsFrom(legacy); // Explicit cleanup is idempotent.
+        Check(!File.Exists(Path.Combine(legacy, "development-secret.txt")) &&
+            !File.Exists(Path.Combine(legacy, "receiver-dev-identity.pfx")) &&
+            File.ReadAllText(Path.Combine(legacy, "preserved.log")) == "failure evidence" && trust.DesktopId == currentDesktop,
+            "legacy cleanup removes only obsolete credentials and preserves evidence/current identity");
         using (var replacement = new ProductionTrust(Path.Combine(directory, "replacement")))
         {
             SeedPhone(replacement, phone);

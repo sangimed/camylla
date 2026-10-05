@@ -56,6 +56,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val upgrade = getSharedPreferences("production-setup", Context.MODE_PRIVATE)
+        if (!upgrade.getBoolean("upgrade_explained", false)) {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            if (info.lastUpdateTime != info.firstInstallTime && runCatching { identity.desktops().none { !it.revoked } }.getOrDefault(false))
+                android.widget.Toast.makeText(this, "Connection setup has changed. Scan your PC's QR to pair again.", android.widget.Toast.LENGTH_LONG).show()
+            upgrade.edit().putBoolean("upgrade_explained", true).apply()
+        }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
         fun button(parent: LinearLayout, label: String, action: () -> Unit): Button {
             val value = Button(this).apply { text = label; setOnClickListener { action() } }

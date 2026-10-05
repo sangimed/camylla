@@ -32,6 +32,7 @@
             <TextBlock x:Name="ConnectionHelp" TextWrapping="Wrap" />
             <Expander Header="Security">
                 <StackPanel Spacing="8">
+                    <Button x:Name="LegacyCleanupButton" Content="Remove old connection credentials" Click="OnRemoveLegacyCredentials" Visibility="Collapsed" />
                     <Button Content="Change PC key" Click="OnRotateDesktop" />
                     <TextBlock x:Name="RotationStatusText" TextWrapping="Wrap" />
                 </StackPanel>

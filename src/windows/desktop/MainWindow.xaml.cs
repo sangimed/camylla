@@ -33,6 +33,13 @@ public sealed partial class MainWindow : Window
         cameraPublisher.Start();
         LanAddressBox.Text = ProductionTrust.LanAddress();
         DesktopFingerprint.Text = $"Desktop fingerprint: {receiver.Trust!.DesktopId}";
+        LegacyCleanupButton.Visibility = LegacyMigration.CredentialsPresent ? Visibility.Visible : Visibility.Collapsed;
+        try
+        {
+            if (LegacyMigration.TakeUpgradeNotice())
+                ConnectionHelp.Text = "Connection setup has changed. Scan the PC QR to pair again; old connection credentials are not imported. You can remove them in Security.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Debug.WriteLine(error); }
         timer.Tick += OnTick;
         Closed += OnClosed;
         receiver.Log += message =>

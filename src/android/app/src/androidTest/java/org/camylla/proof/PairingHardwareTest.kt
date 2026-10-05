@@ -12,6 +12,49 @@ import org.json.JSONObject
 /** Opt-in hardware test: only consumes an explicitly prepared local invitation. Never starts capture. */
 @RunWith(AndroidJUnit4::class)
 class PairingHardwareTest {
+    @Test fun desktopReplacementDialogCancelPreservesTrust() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val before = ProductIdentity(context).desktops()
+        val previous = before.first { !it.revoked }
+        val newId = if (previous.id != "0".repeat(64)) "0".repeat(64) else "1".repeat(64)
+        val pending = PendingPair(PairInvitation(previous.host, 58413, newId, "0".repeat(32), "0".repeat(64),
+            System.currentTimeMillis() / 1000 + 120), "0".repeat(32), previous.certificate, previous.name,
+            android.os.SystemClock.elapsedRealtime(), false, null)
+        val activity = instrumentation.startActivitySync(android.content.Intent(context, PairActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            val result = executor.submit<Boolean> {
+                try {
+                    val method = PairActivity::class.java.getDeclaredMethod("confirmDesktopReplacement", TrustedDesktop::class.java, PendingPair::class.java)
+                    method.isAccessible = true
+                    method.invoke(activity, previous, pending)
+                    false
+                } catch (error: java.lang.reflect.InvocationTargetException) {
+                    error.cause is IllegalStateException
+                }
+            }
+            var found = false
+            for (attempt in 0 until 30) {
+                val root = instrumentation.uiAutomation.rootInActiveWindow
+                if (root?.findAccessibilityNodeInfosByText("Replace this PC's identity?")?.isNotEmpty() == true) {
+                    assertTrue(root.findAccessibilityNodeInfosByText(previous.id).isNotEmpty())
+                    assertTrue(root.findAccessibilityNodeInfosByText(newId).isNotEmpty())
+                    val cancel = root.findAccessibilityNodeInfosByText("Cancel").first { it.isClickable }
+                    assertTrue(cancel.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+                    found = true; break
+                }
+                Thread.sleep(100)
+            }
+            assertTrue("Replacement dialog/fingerprints not accessible", found)
+            assertTrue("Cancelled replacement did not abort approval", result.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue("Cancelled review changed protected trust", ProductIdentity(context).desktops() == before)
+        } finally {
+            executor.shutdownNow()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
     @Test fun isolatedRotationRecoversLostAcknowledgementAndChangesBothKeys() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val originalPhone = ProductIdentity(context).phoneId
