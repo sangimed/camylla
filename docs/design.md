@@ -34,13 +34,14 @@ Reference implementations have been inspected at pinned commits; see [source ins
 - Wi-Fi connection, live preview, camera selection, basic image controls, persistent settings, and reliable reconnection.
 - Standalone desktop app with its own setup, preview, controls, and settings; no OBS installation or shell. Exact workflows remain open.
 - Front/rear selection, orientation, zoom, continuous autofocus, and explicit output mirroring; preview mirroring is a separate setting.
+- Expanded #26 scope (user decision, 2026-10-05): a mobile camera interface with tap focus, focus lock/manual focus, torch, exposure/ISO/shutter, white-balance and image controls, framing aids and reusable preferences, exposing only actual supported capabilities. See [camera controls and UX brief](camera-controls-ux.md). These controls are now M4 work rather than deferred features; no hardware or implementation PASS is implied.
 - User starts the session from the phone. Continued streaming during app switching and screen-off is required on tested devices, with a visible notification and stop action.
 - Reliable 30-FPS operation is the core requirement. 60 FPS is optional, capability-dependent and best-effort; fall back to 30 FPS if unsupported or unsustainable. Failure to deliver 60 FPS does not block v1 or force a more complex architecture.
 - Current target phone: Samsung S21 Ultra (supersedes the earlier S20 Ultra statement). Android is reportedly above 10, possibly 13; exact version is unverified.
 
 ## 5. Deferred features
 
-All audio (capture, transport, playback, microphone permissions, virtual microphone), USB, multiple phones/scene composition, recording, advanced manual focus/exposure controls, torch, and tap-to-focus. Unattended remote start and boot-start capture are excluded from v1. OBS fork, libobs embedding, and a Camylla OBS plugin are excluded. No separate receiver service, mandatory cloud service, automatic updater, Store publication, or cross-platform UI requirement. 4K/high-FPS validation is deferred; 60 FPS is optional, not a launch gate. Do not deliberately cap modes proven sustainable on a supported configuration.
+All audio (capture, transport, playback, microphone permissions, virtual microphone), USB, multiple phones/scene composition, and recording. Manual focus/exposure, torch and tap-to-focus moved into #26 on 2026-10-05. Unattended remote start and boot-start capture are excluded from v1. OBS fork, libobs embedding, and a Camylla OBS plugin are excluded. No separate receiver service, mandatory cloud service, automatic updater, Store publication, or cross-platform UI requirement. 4K/high-FPS validation is deferred; 60 FPS is optional, not a launch gate. Do not deliberately cap modes proven sustainable on a supported configuration.
 
 ## 6. Proposed architecture
 

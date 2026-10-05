@@ -84,6 +84,7 @@ Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues
 
 - [ ] Build the focused Windows setup and preview experience.
 - [ ] Add camera/mode controls and persistent settings.
+- [ ] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets; see [UX scope and research](docs/camera-controls-ux.md).
 - [ ] Add pairing and repeat-use workflows.
 - [ ] Add actionable errors and recovery states.
 - [ ] Add degradation reporting for network/thermal pressure.
