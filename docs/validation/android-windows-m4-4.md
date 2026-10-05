@@ -179,3 +179,13 @@ again (**OK (1 test)**, `tablet-ui-rotation-app-restart-20261005.txt`). Android
 process restart and desktop restart preserve the changed identity and trust.
 A full tablet reboot and normal desktop-key-change confirmation remain pending.
 No actual camera preview is inferred; capture stayed stopped throughout.
+
+## Deferred full Android reboot validation
+
+At the user's request on 2026-10-05, full Android device reboot and first-unlock
+persistence was removed from the blocking acceptance scope of #25 and moved to
+[follow-up #34](https://github.com/sangimed/camylla/issues/34), with low priority.
+#25 now requires app-process and Windows receiver restart persistence. Existing
+references above to a pending full reboot remain historical test status: the check
+is still **not tested**, but no longer blocks #25. Other #25 acceptance criteria
+are unchanged, and this scope change does not itself establish full acceptance.
