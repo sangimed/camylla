@@ -125,6 +125,7 @@ public sealed partial class MainWindow : Window
             if (!fresh) ClearPreview();
             StateText.Text = lastError != null ? $"Receiver error: {lastError}" :
                 fresh ? $"Streaming · {snapshot.Width} × {snapshot.Height}" :
+                snapshot.State == "Disconnected" && receiver.Trust!.Phones.Any(p => !p.Revoked) ? "Phone paired · Capture stopped" :
                 $"Waiting for phone · {snapshot.State}";
             UpdatePairingUi();
             DiagnosticsText.Text =
