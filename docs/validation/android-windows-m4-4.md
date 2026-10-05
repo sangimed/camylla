@@ -189,3 +189,23 @@ persistence was removed from the blocking acceptance scope of #25 and moved to
 references above to a pending full reboot remain historical test status: the check
 is still **not tested**, but no longer blocks #25. Other #25 acceptance criteria
 are unchanged, and this scope change does not itself establish full acceptance.
+
+## Normal desktop-key rotation with tablet confirmation (2026-10-05)
+
+The user confirmed the key change on the tablet. Windows retired desktop identity
+`d59ab0121924c0a7046412d68215daa527347eea0b23feb73914dfbfa249a335`
+and committed `1f1dcb011a7742b41170f277d055edb4e6ab068de118cdef2a1b87ae7f62c110`
+at 18:52:24 UTC, after mutual-TLS proof. Evidence:
+`tablet-desktop-key-rotation-receiver-20261005.txt`.
+
+Remembered control/video connection and Stop passed **OK (1 test)** immediately
+(`tablet-after-desktop-key-rotation-20261005.txt`) and after graceful desktop
+close/reopen plus Android app-process restart (`tablet-both-keys-restart-20261005.txt`).
+The tablet is paired under both new identities. The S21's previous desktop trust
+now requires fresh pairing, as disclosed before confirmation.
+
+The idle desktop label was clarified to `Phone paired · Capture stopped` and
+verified through UI Automation; its build had zero warnings/errors. This indicates
+saved trust and stopped capture, not continuous network presence. The tablet UI
+reported readiness to start. User visual confirmation of automatic QR-dialog
+closure remains unrecorded; no additional OBS preview claim is made.
