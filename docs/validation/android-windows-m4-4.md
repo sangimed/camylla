@@ -162,3 +162,20 @@ in `receiver-v3-20261005-184344-33f168ef.log`. The follow-up instrumentation tes
 `tablet-remembered-connection-20261005.txt`: nonexportable Android key,
 TLS 1.3 control/video authentication, one-use video binding and Stop without
 opening the camera. This does not claim a new visual preview or frame-rate result.
+
+## Normal tablet phone-key rotation and app restart (2026-10-05)
+
+The user reported confirming the desktop key-change dialog after initiating the
+phone key change. Product receiver evidence records mutual-TLS proof of new
+phone identity `f80d710ccfbaf723aafcf9f3e83709f6e26a3061f71316475aa7c3fd72781593`
+and durable commit/previous-identity retirement at 18:46:06 UTC. Previous ID:
+`3c87f8fb0fbdf0a4b69b1efb77c9902e644e018ca57d9b686f3ae0711d049605`.
+Evidence preserved in `tablet-ui-rotation-receiver-20261005.txt` and associated CSV.
+
+`tablet-after-ui-rotation-20261005.txt` passed **OK (1 test)** for remembered
+control/video authentication and Stop with the new identity. After graceful
+Windows desktop close/reopen and Android app force-stop, the same test passed
+again (**OK (1 test)**, `tablet-ui-rotation-app-restart-20261005.txt`). Android
+process restart and desktop restart preserve the changed identity and trust.
+A full tablet reboot and normal desktop-key-change confirmation remain pending.
+No actual camera preview is inferred; capture stayed stopped throughout.
