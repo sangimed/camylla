@@ -20,6 +20,15 @@ import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.FrameLayout
+import android.view.SurfaceView
+import android.view.SurfaceHolder
+import android.view.MotionEvent
+import android.view.ScaleGestureDetector
+import android.view.GestureDetector
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.view.View
 import androidx.camera.core.CameraSelector
 import androidx.core.content.ContextCompat
 import java.util.Locale
@@ -39,6 +48,11 @@ class MainActivity : Activity() {
     private var trustedDesktops: List<TrustedDesktop> = emptyList()
     private val identity get() = ProductIdentity(this)
     private var trustError = ""
+    private lateinit var previewView: SurfaceView
+    private lateinit var cameraPanel: CameraControlsPanel
+    private lateinit var histogramView: View
+    private lateinit var lensChoice: Button
+    private lateinit var previewPlaceholder: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
@@ -49,6 +63,7 @@ class MainActivity : Activity() {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = (binder as CaptureService.LocalBinder).service
+            attachPreview()
             showStats()
         }
         override fun onServiceDisconnected(name: ComponentName) { service = null }
@@ -85,17 +100,18 @@ class MainActivity : Activity() {
                 CaptureService.Mode.entries.map { it.label })
         }
         captureControls.addView(modes)
-        button(captureControls, "Start capture") { startWithPermission() }
-        button(captureControls, "Stop capture") {
-            startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
-        }
         val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE }
         button(captureControls, "Camera settings") {
             settings.visibility = if (settings.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
         }
-        button(settings, "Switch front / rear") {
-            service?.switchCamera()
-            requestedLens = if (requestedLens == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+        lensChoice = button(captureControls, "Choose optical camera") {
+            val list = service?.cameras().orEmpty()
+            if (list.isEmpty()) { connectionStatus.text = "Camera list unavailable"; return@button }
+            android.app.AlertDialog.Builder(this).setTitle("Select optical camera").setItems(list.map { it.label }.toTypedArray()) { _, i ->
+                CameraSettings(this).preferredCamera = list[i].id
+                requestedLens = if (list[i].facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+                if (service?.stats()?.state != "Stopped") service?.selectCamera(list[i].id)
+            }.show()
         }
         button(settings, "Apply selected mode") { service?.setMode(CaptureService.Mode.entries[modes.selectedItemPosition]) }
         settings.addView(TextView(this).apply { text = "Zoom" })
@@ -108,6 +124,9 @@ class MainActivity : Activity() {
             })
         }
         settings.addView(zoom)
+        zoom.visibility = View.GONE
+        cameraPanel = CameraControlsPanel(this) { service }
+        captureControls.addView(cameraPanel)
         button(settings, "Forget this PC") {
             val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition)
             if (peer != null) android.app.AlertDialog.Builder(this).setTitle("Forget ${peer.name}?")
@@ -142,7 +161,61 @@ class MainActivity : Activity() {
             stats.visibility = if (stats.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
         }
         layout.addView(stats)
-        setContentView(ScrollView(this).apply { addView(layout) })
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val body = LinearLayout(this).apply {
+            orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        }
+        val previewFrame = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK); minimumHeight = (180 * resources.displayMetrics.density).toInt() }
+        previewView = SurfaceView(this).apply { contentDescription = "Camera preview. Tap to focus; pinch to zoom. Focus centre and zoom buttons are available below." }
+        previewFrame.addView(previewView, FrameLayout.LayoutParams(-1,-1))
+        previewPlaceholder = TextView(this).apply { text = "Start camera to preview"; setTextColor(android.graphics.Color.WHITE); textSize = 20f; gravity = android.view.Gravity.CENTER }
+        previewFrame.addView(previewPlaceholder, FrameLayout.LayoutParams(-1,-1))
+        histogramView = object : View(this) {
+            val paint = Paint().apply { color = android.graphics.Color.WHITE; strokeWidth = 2f }
+            override fun onDraw(canvas: Canvas) {
+                val state = service?.cameraStatus ?: return
+                if (state.applied["histogram"] != 1.0) return
+                val bins = state.histogram; val peak = bins.maxOrNull()?.coerceAtLeast(1) ?: 1
+                val w = minOf(width.toFloat(), 256f * resources.displayMetrics.density); val h = 64f * resources.displayMetrics.density
+                paint.color = 0xAA000000.toInt(); canvas.drawRect(8f, 8f, w + 8, h + 8, paint); paint.color = android.graphics.Color.WHITE
+                for (i in bins.indices) canvas.drawLine(8+i*w/64,8+h,8+i*w/64,8+h-bins[i].toFloat()/peak*h,paint)
+            }
+        }
+        previewFrame.addView(histogramView, FrameLayout.LayoutParams(-1,-1))
+        val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { service?.tapFocus(e.x.toDouble(), e.y.toDouble(), previewView.width, previewView.height); return true }
+            override fun onLongPress(e: MotionEvent) { service?.control("focusLock", 1.0) }
+        })
+        val pinch = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            var last = 0L
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (android.os.SystemClock.elapsedRealtime() - last < 100) return true
+                last = android.os.SystemClock.elapsedRealtime()
+                val state = service?.cameraStatus ?: return false
+                val o = state.options.find { it.key == "zoom" } ?: return false
+                service?.control("zoom", ((state.applied["zoom"] ?: 1.0) * detector.scaleFactor).coerceIn(o.min,o.max)); return true
+            }
+        })
+        previewView.setOnTouchListener { _, event -> pinch.onTouchEvent(event); if (!pinch.isInProgress) gestures.onTouchEvent(event); true }
+        previewView.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) { attachPreview() }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { attachPreview() }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { service?.attachPreview(null, 1, 1) }
+        })
+        val scroll = ScrollView(this).apply { addView(layout) }
+        if (body.orientation == LinearLayout.HORIZONTAL) {
+            body.addView(previewFrame, LinearLayout.LayoutParams(0,-1,2f)); body.addView(scroll, LinearLayout.LayoutParams(0,-1,1f))
+        } else {
+            body.addView(previewFrame, LinearLayout.LayoutParams(-1,0,3f)); body.addView(scroll, LinearLayout.LayoutParams(-1,0,2f))
+        }
+        root.addView(body, LinearLayout.LayoutParams(-1,0,1f))
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val start = Button(this).apply { text = "Start camera"; setOnClickListener { startWithPermission() } }
+        val stop = Button(this).apply { text = "Stop camera"; setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
+        actions.addView(start, LinearLayout.LayoutParams(0,-2,1f)); actions.addView(stop, LinearLayout.LayoutParams(0,-2,1f)); root.addView(actions)
+        setContentView(root)
+        modes.setSelection(CaptureService.Mode.fromName(CameraSettings(this).preferredMode).ordinal)
         showStats()
     }
 
@@ -164,6 +237,7 @@ class MainActivity : Activity() {
             .setAction(CaptureService.ACTION_START)
             .putExtra(CaptureService.EXTRA_MODE, CaptureService.Mode.entries[modes.selectedItemPosition].name)
             .putExtra(CaptureService.EXTRA_LENS, requestedLens)
+            .putExtra(CaptureService.EXTRA_CAMERA, CameraSettings(this).preferredCamera)
             .putExtra(CaptureService.EXTRA_PEER, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id)
         ContextCompat.startForegroundService(this, intent)
     }
@@ -192,6 +266,7 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         handler.removeCallbacks(refresh)
+        service?.attachPreview(null, 1, 1)
         if (bound) unbindService(connection)
         bound = false
         service = null
@@ -199,7 +274,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshDesktops() {
-        val selected = trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id
+        val selected = trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id ?: CameraSettings(this).preferredPeer
         runCatching { identity.desktops().filter { !it.revoked } }.onSuccess {
             trustedDesktops = it; trustError = ""
             resumeKeyChange.visibility = if (identity.pendingRotation != null) android.view.View.VISIBLE else android.view.View.GONE
@@ -213,6 +288,14 @@ class MainActivity : Activity() {
     }
     private fun showStats() {
         val value = service?.stats() ?: StatsSnapshot()
+        if (::cameraPanel.isInitialized) cameraPanel.update(service?.cameraStatus ?: CameraStatus())
+        if (::histogramView.isInitialized) histogramView.invalidate()
+        if (::previewPlaceholder.isInitialized) {
+            previewPlaceholder.visibility = if (value.state == "Capturing") View.GONE else View.VISIBLE
+            previewPlaceholder.text = if (value.state == "Stopped") "Start camera to preview" else value.state
+        }
+        if (::lensChoice.isInitialized) lensChoice.text = if (value.camera.isNotEmpty()) "Camera: ${value.camera}" else "Choose optical camera"
+        service?.displayRotation(when (windowManager.defaultDisplay.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_180 -> 180; android.view.Surface.ROTATION_270 -> 270; else -> 0 })
         desktops.isEnabled = value.state == "Stopped"
         connectionStatus.text = when {
             trustError.isNotEmpty() -> trustError
@@ -249,5 +332,9 @@ class MainActivity : Activity() {
     companion object {
         private const val CAMERA_REQUEST = 1
         private const val NOTIFICATION_REQUEST = 2
+    }
+    private fun attachPreview() {
+        if (::previewView.isInitialized && previewView.holder.surface.isValid)
+            service?.attachPreview(previewView.holder.surface, previewView.width.coerceAtLeast(1), previewView.height.coerceAtLeast(1))
     }
 }

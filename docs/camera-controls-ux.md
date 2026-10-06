@@ -1,7 +1,8 @@
 # Camera controls and mobile UX — expanded #26 scope
 
-Status: research and implementation brief, 2026-10-05. No camera-control
-implementation or new hardware PASS is claimed. At the user's request, #26 now
+Status: scope brief, 2026-10-05; integrated implementation checkpoint, 2026-10-06,
+documented in [M4.5 validation](validation/android-windows-m4-5.md). Physical camera
+and visual acceptance remain pending. At the user's request, #26 now
 covers a full camera-control experience for webcam use, including features that
 the previous design deferred: tap focus, focus lock/manual focus, torch and
 advanced exposure controls. The mobile interface is the primary camera surface;

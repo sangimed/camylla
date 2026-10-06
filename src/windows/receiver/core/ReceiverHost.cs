@@ -21,6 +21,7 @@ public sealed partial class ReceiverHost : IDisposable
     private ulong lastSequence, lastPts, lastAndroidSendUs;
     private long lastReceiveTicks, lastDecodeTicks;
     private long lastPushReceiveToDecodeTicks;
+    private long frameEpoch;
     private uint lastDecodedWidth, lastDecodedHeight, lastDecodedStride;
 
     private readonly LatestFrameStore frames = new();
@@ -52,6 +53,7 @@ public sealed partial class ReceiverHost : IDisposable
     }
     private void ClearFrames()
     {
+        Interlocked.Increment(ref frameEpoch);
         frames.Clear();
         lock (readerGate) foreach (var reader in readers) reader.Clear();
     }
@@ -125,7 +127,7 @@ public sealed partial class ReceiverHost : IDisposable
             Interlocked.Read(ref reconnects), lastSequence, lastPts, lastAndroidSendUs,
             lastReceiveTicks, lastDecodeTicks, Interlocked.Read(ref lastPushReceiveToDecodeTicks),
             lastDecodedWidth, lastDecodedHeight, lastDecodedStride,
-            frames.PendingDepth, frames.HighWater, frames.Superseded);
+            frames.PendingDepth, frames.HighWater, frames.Superseded, Interlocked.Read(ref frameEpoch));
     }
 
     private void Report(string message) => (Log ?? Console.WriteLine)(message);
@@ -324,6 +326,12 @@ public sealed partial class ReceiverHost : IDisposable
                     previous = unit.Sequence;
                     if (unit.Flags == Wire.Config)
                     {
+                        if (config != null && unit.Generation != generation)
+                        {
+                            decoder.Reset(); Interlocked.Increment(ref decoderResets);
+                            needsKey = true;
+                            lock (Gate) if (active == session) ClearFrames();
+                        }
                         config = unit.Payload.AsSpan(0, unit.PayloadLength).ToArray();
                         generation = unit.Generation;
                         continue;
@@ -403,7 +411,7 @@ public sealed record ReceiverSnapshot(string State, string Peer, string SessionI
     long DecoderResets, long VideoConnections, ulong LastSequence, ulong LastPtsUs,
     ulong LastAndroidSendUs, long LastReceiveTicks, long LastDecodeTicks,
     long LastReceiveToDecodeTicks, uint Width, uint Height, uint Stride,
-    int FrameQueueDepth, int FrameQueueHighWater, long SupersededPreviewFrames);
+    int FrameQueueDepth, int FrameQueueHighWater, long SupersededPreviewFrames, long FrameEpoch = 0);
 
 internal enum ReceiverState { Disconnected, Connecting, Authenticating, Negotiating, Streaming, Recovering, Stopping, Error }
 
@@ -414,18 +422,20 @@ internal sealed class Session(string id, string mode, string lens, string peer, 
     private bool videoBound;
     private ReceiverState state = ReceiverState.Negotiating;
     public string Id { get; } = id;
-    public string Mode { get; } = mode;
-    public string Lens { get; } = lens;
+    public string Mode { get; internal set; } = mode;
+    public string Lens { get; internal set; } = lens;
     public string Peer { get; } = peer;
     public ReceiverState State { get { lock (this) return state; } }
     public CancellationToken Token => stop.Token;
     public bool TryBindVideo() { lock (this) { if (videoBound || stop.IsCancellationRequested) return false; videoBound = true; state = ReceiverState.Streaming; return true; } }
     public void UnbindVideo() { lock (this) { videoBound = false; if (!stop.IsCancellationRequested) state = ReceiverState.Recovering; } }
+    public void BeginCameraChange() { lock (this) { if (!stop.IsCancellationRequested) state = ReceiverState.Recovering; } }
     public void Stop() { lock (this) state = ReceiverState.Stopping; stop.Cancel(); }
     public async Task SendAsync(object message, CancellationToken ct)
     {
         await sendGate.WaitAsync(ct);
         try { await Wire.WriteControlAsync(control, message, ct); }
+        catch { Stop(); throw; } // A partially cancelled TLS record cannot be reused.
         finally { sendGate.Release(); }
     }
     public async Task StopAndSendAsync(object message, CancellationToken ct)

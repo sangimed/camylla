@@ -27,6 +27,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     private long published, neutral, failures;
     private bool firstInstance = true;
     private string? lastError;
+    private readonly string pipeName;
 
     public long Published => Interlocked.Read(ref published);
     public long Neutral => Interlocked.Read(ref neutral);
@@ -40,13 +41,14 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     public CameraPipePublisher(ReceiverHost receiver) : this(receiver, () =>
     {
         var snapshot = receiver.Snapshot();
-        return (snapshot.State == "Streaming", snapshot.SessionId);
+        return (snapshot.State == "Streaming", $"{snapshot.SessionId}:{snapshot.FrameEpoch}");
     }) { }
 
-    internal CameraPipePublisher(ReceiverHost receiver, Func<(bool Streaming, string Session)> state)
+    internal CameraPipePublisher(ReceiverHost receiver, Func<(bool Streaming, string Session)> state, string pipeName = PipeName)
     {
         this.receiver = receiver;
         this.state = state;
+        this.pipeName = pipeName;
         reader = receiver.CreateFrameReader();
     }
 
@@ -147,15 +149,18 @@ public sealed class CameraPipePublisher : IAsyncDisposable
                     OwnedNv12Frame? frame;
                     byte[] streamGeneration;
                     ulong frameSequence;
+                    string frameSession;
                     lock (gate)
                     {
                         frame = current?.Retain();
                         streamGeneration = (byte[])generation.Clone();
                         frameSequence = sequence;
+                        frameSession = session;
                     }
                     using (frame)
                     {
-                        var live = frame != null && state().Streaming &&
+                        var publicationState = state();
+                        var live = frame != null && publicationState.Streaming && publicationState.Session == frameSession &&
                             ((frame.Width == 1280 && frame.Height == 720) ||
                              (frame.Width == 1920 && frame.Height == 1080)) &&
                             frame.Stride >= frame.Width && frame.Stride <= 4096 &&
@@ -211,7 +216,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
                 SecurityDescriptor = descriptor };
             // PIPE_REJECT_REMOTE_CLIENTS; the user ACE alone would otherwise allow remote SMB pipe access.
             var openMode = 0x40000003u | (firstInstance ? 0x00080000u : 0u);
-            var handle = CreateNamedPipe(@"\\.\pipe\" + PipeName, openMode, 0x8, MaxClients,
+            var handle = CreateNamedPipe(@"\\.\pipe\" + pipeName, openMode, 0x8, MaxClients,
                 64 * 1024, 4, 0, ref attributes);
             if (handle.IsInvalid) throw new IOException("Unable to create camera pipe", Marshal.GetLastWin32Error());
             firstInstance = false;

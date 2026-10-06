@@ -58,6 +58,7 @@ if (args.Length == 2 && args[0] == "--android-pairing-self-test")
     return;
 }
 if (args.Length == 1 && args[0] == "--self-test") { await SelfTest.RunAsync(); return; }
+if (args.Length == 1 && args[0] == "--camera-controls-self-test") { await ProductionSelfTest.RunCameraControlsAsync(); return; }
 if (args.Length == 1 && args[0] == "--ipc-host-smoke") { await SelfTest.IpcHostSmokeAsync(); return; }
 if (args.Length == 1 && args[0] == "--frame-memory-smoke") { SelfTest.FrameMemorySmoke(); return; }
 if (args.Length == 1 && args[0] == "--decoder-smoke") {

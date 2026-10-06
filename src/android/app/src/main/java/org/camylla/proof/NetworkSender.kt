@@ -30,8 +30,10 @@ internal fun NetworkProgress.streamed(recoveries: Long) = copy(
 /** One explicit phone-started session. Socket work is confined to worker/control threads. */
 class NetworkSender(
     private val identity: ProductIdentity, private val peer: TrustedDesktop,
-    private val mode: String, private val lens: String,
+    @Volatile private var mode: String, @Volatile private var lens: String,
     private val requestSyncFrame: () -> Unit,
+    private val onCameraSession: (String) -> Unit = {},
+    private val onCameraCommand: (JSONObject, (JSONObject) -> Unit) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     private data class PendingUnit(val payload: ByteArray, val ptsUs: Long, val flag: Int,
                                    val queuedNs: Long, val generation: Int)
@@ -53,6 +55,25 @@ class NetworkSender(
     private val syncGate = SyncGate()
     private val transportGate = VideoTransportGate()
     private var sequence = 0L
+    private val rebindTickets = java.util.concurrent.ArrayBlockingQueue<JSONObject>(1)
+    @Volatile private var cameraGeneration = 1
+    @Volatile private var reconfigured = false
+    @Volatile private var appliedCameraGeneration = 0
+    fun readyCameraGeneration(): Int = appliedCameraGeneration
+    private val cameraWrites = java.util.concurrent.ThreadPoolExecutor(1, 1, 0, java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.ArrayBlockingQueue<Runnable>(64), { work -> Thread(work, "camylla-camera-control-writer").apply { isDaemon = true } })
+
+    fun currentSession(): String? = if (stopping) null else sessionId
+    fun cameraRecord(record: JSONObject, expectedSession: String? = null) {
+        val control = controlSocket ?: return
+        val id = sessionId ?: return
+        if (expectedSession != null && expectedSession != id) return
+        record.put("version", 3).put("session_id", id)
+        try { cameraWrites.execute {
+            if (!stopping && controlSocket === control && sessionId == id) runCatching { writeControl(control, record.toString()) }
+                .onFailure { runCatching { control.close() } }
+        } } catch (_: java.util.concurrent.RejectedExecutionException) { /* Bounded status traffic. Next snapshot retries. */ }
+    }
 
     init {
         require(host.isNotBlank() && !peer.revoked && identity.desktops().any { it.id == peer.id && !it.revoked })
@@ -61,6 +82,14 @@ class NetworkSender(
     }
 
     fun stats(): NetworkProgress = progress
+
+    fun reconfigure(nextMode: String, nextLens: String, nextGeneration: Int) = synchronized(lock) {
+        cameraRecord(JSONObject().put("type", "camera_changing").put("generation", nextGeneration))
+        appliedCameraGeneration = 0
+        mode = nextMode; lens = nextLens; cameraGeneration = nextGeneration; reconfigured = true
+        generation++; config = null
+        resetLocked()
+    }
 
     fun newEncoder() = synchronized(lock) {
         generation++
@@ -131,20 +160,22 @@ class NetworkSender(
                 val control = connect(CONTROL_PORT)
                 controlSocket = control
                 progress = progress.copy(state = "Authenticating")
+                val initial = synchronized(lock) { Triple(mode, lens, cameraGeneration) }
                 val hello = JSONObject().put("type", "start").put("version", M4Wire.VERSION)
-                    .put("codec", "h264").put("mode", mode).put("lens", lens)
+                    .put("codec", "h264").put("mode", initial.first).put("lens", initial.second)
                     .put("modes", JSONArray(listOf("1280x720@30", "1920x1080@30")))
                     .put("phone_id", identity.phoneId).put("client_nonce", ProductIdentity.randomHex(16))
                 writeControl(control, hello.toString())
                 val welcome = JSONObject(M4Wire.readControl(control.inputStream))
                 if (welcome.optString("type") != "started" || welcome.optInt("version") != M4Wire.VERSION ||
-                    welcome.optString("mode") != mode || welcome.optString("codec") != "h264" ||
+                    welcome.optString("mode") != initial.first || welcome.optString("codec") != "h264" ||
                     welcome.optInt("fps") != 30)
                     throw IllegalStateException("Capability negotiation rejected")
                 M4Wire.record(welcome, "started", "session_id", "client_nonce", "server_nonce", "video_ticket", "codec", "mode", "fps")
                 require(welcome.getString("client_nonce") == hello.getString("client_nonce"))
                 PairInvitation.hex(welcome.getString("server_nonce"), 16); PairInvitation.hex(welcome.getString("video_ticket"), 32)
                 sessionId = welcome.getString("session_id")
+                onCameraSession(sessionId!!)
                 val id = M4Wire.hex16(sessionId!!)
                 progress = progress.copy(state = "Negotiating")
                 val lastPong = java.util.concurrent.atomic.AtomicLong(SystemClock.elapsedRealtime())
@@ -160,12 +191,16 @@ class NetworkSender(
                 heartbeatThread = Thread({ heartbeat(control, heartbeat) }, "camylla-control-heartbeat")
                     .apply { isDaemon = true; start() }
                 if (control.isClosed) throw java.io.IOException("Control session closed")
+                var ticket = welcome.getString("video_ticket")
+                var ticketGeneration = initial.third
+                while (!stopping && !control.isClosed) {
+                try {
                 val video = connect(VIDEO_PORT)
                 videoSocket = video
                 val bind = JSONObject().put("type", "bind").put("version", M4Wire.VERSION)
                     .put("session_id", welcome.getString("session_id")).put("phone_id", identity.phoneId)
                     .put("client_nonce", welcome.getString("client_nonce")).put("server_nonce", welcome.getString("server_nonce"))
-                    .put("video_ticket", welcome.getString("video_ticket"))
+                    .put("video_ticket", ticket)
                 M4Wire.writeControl(video.outputStream, bind.toString())
                 val ready = JSONObject(M4Wire.readControl(video.inputStream))
                 M4Wire.record(ready, "ready", "session_id")
@@ -174,7 +209,12 @@ class NetworkSender(
                 if (control.isClosed) throw java.io.IOException("Control session closed")
                 synchronized(lock) {
                     resetLocked(closeVideo = false, requestKeyFrame = false)
-                    transportGate.ready(requestSyncFrame)
+                    if (ticketGeneration != cameraGeneration) video.close() else {
+                        reconfigured = false
+                        appliedCameraGeneration = ticketGeneration
+                        transportGate.ready(requestSyncFrame)
+                        onCameraSession(sessionId!!)
+                    }
                 }
                 recovery.streaming()
                 progress = progress.streamed(recovery.successfulRecoveries)
@@ -196,7 +236,32 @@ class NetworkSender(
                     progress = progress.copy(sentFrames = progress.sentFrames + if (unit.flag == M4Wire.CONFIG) 0 else 1,
                         sentBytes = progress.sentBytes + packet.size, lastSequence = next)
                 }
-                if (!stopping) throw java.io.IOException("Control or video channel closed")
+                } catch (error: java.io.IOException) {
+                    // Closing the old video socket is expected during a camera change. Keep
+                    // the authenticated control channel and renew its one-use video ticket.
+                    if (stopping || control.isClosed || !reconfigured) throw error
+                } finally {
+                    runCatching { videoSocket?.close() }
+                    videoSocket = null
+                    appliedCameraGeneration = 0
+                }
+                if (!stopping && !control.isClosed) {
+                    progress = progress.copy(state = "Recovering")
+                    val nonce = ProductIdentity.randomHex(16)
+                    val nextCamera = synchronized(lock) { Triple(mode, lens, cameraGeneration) }
+                    val changed = reconfigured
+                    val rebind = JSONObject().put("type", if (changed) "camera_reconfigure" else "video_rebind")
+                        .put("version", 3).put("session_id", sessionId).put("request_nonce", nonce)
+                    if (changed) rebind.put("mode", nextCamera.first).put("lens", nextCamera.second).put("generation", nextCamera.third)
+                    rebindTickets.clear()
+                    writeControl(control, rebind.toString())
+                    val renewed = rebindTickets.poll(5, java.util.concurrent.TimeUnit.SECONDS) ?: throw java.io.IOException("Video rebind timed out")
+                    require(renewed.getString("request_nonce") == nonce) { "Wrong video rebind nonce" }
+                    ticket = renewed.getString("video_ticket")
+                    ticketGeneration = nextCamera.third
+                }
+                }
+                if (!stopping) throw java.io.IOException("Control channel closed")
             } catch (error: Exception) {
                 if (!stopping) reportError("Transport: ${error.message}")
             } finally {
@@ -205,6 +270,7 @@ class NetworkSender(
                 if (activeHeartbeat === sessionHeartbeat) activeHeartbeat = null
                 runCatching { videoSocket?.close() }; videoSocket = null
                 runCatching { controlSocket?.close() }; controlSocket = null
+                appliedCameraGeneration = 0
                 heartbeatThread?.join(500)
                 synchronized(lock) {
                     if (transportGate.isReady) {
@@ -240,6 +306,30 @@ class NetworkSender(
                 when (message.optString("type")) {
                     "sync" -> { M4Wire.record(message, "sync"); synchronized(lock) { resetLocked(closeVideo = false) } }
                     "pong" -> { M4Wire.record(message, "pong"); lastPong.set(SystemClock.elapsedRealtime()) }
+                    "camera_command" -> {
+                        M4Wire.cameraRequest(message)
+                        require(message.getString("session_id") == sessionId) { "Obsolete camera session" }
+                        val expected = message.getString("session_id")
+                        onCameraCommand(message) { response -> cameraRecord(response, expected) }
+                    }
+                    "camera_focus" -> {
+                        M4Wire.cameraRequest(message)
+                        require(message.getString("session_id") == sessionId)
+                        val expected = message.getString("session_id")
+                        onCameraCommand(message) { response -> cameraRecord(response, expected) }
+                    }
+                    "camera_cancel" -> {
+                        M4Wire.cameraRequest(message)
+                        require(message.getString("session_id") == sessionId)
+                        onCameraCommand(message) { }
+                    }
+                    "video_ticket" -> {
+                        M4Wire.record(message, "video_ticket", "session_id", "request_nonce", "video_ticket")
+                        require(message.getString("session_id") == sessionId)
+                        PairInvitation.hex(message.getString("request_nonce"), 16)
+                        PairInvitation.hex(message.getString("video_ticket"), 32)
+                        require(rebindTickets.offer(message)) { "Unexpected extra video ticket" }
+                    }
                     "error" -> throw IllegalStateException(message.optString("code", "Receiver rejected session"))
                     else -> throw IllegalStateException("Unknown control message")
                 }
@@ -271,6 +361,7 @@ class NetworkSender(
 
     override fun close() {
         stopping = true
+        cameraWrites.shutdownNow()
         retryWaiter.cancel()
         activeHeartbeat?.cancel()
         synchronized(lock) { queue.clear(); lock.notifyAll() }

@@ -20,6 +20,7 @@ public sealed partial class MainWindow : Window
     private long lastPreviewTicks;
     private long displayed;
     private string lastSessionId = "none";
+    private long lastFrameEpoch;
     private string? lastError;
     private StreamWriter? diagnosticsLog;
     private StreamWriter? receiverEventLog;
@@ -78,9 +79,10 @@ public sealed partial class MainWindow : Window
             if (receiverTask is { IsFaulted: true })
                 lastError = receiverTask.Exception?.GetBaseException().Message;
             var snapshot = receiver.Snapshot();
-            if (snapshot.SessionId != lastSessionId)
+            if (snapshot.SessionId != lastSessionId || snapshot.FrameEpoch != lastFrameEpoch)
             {
                 lastSessionId = snapshot.SessionId;
+                lastFrameEpoch = snapshot.FrameEpoch;
                 lastPreviewTicks = 0;
             }
             using var frame = receiver.Frames.TakeLatest();
@@ -98,7 +100,7 @@ public sealed partial class MainWindow : Window
                 {
                     if (closing) return;
                     var current = receiver.Snapshot();
-                    if (current.State != "Streaming" || current.SessionId != snapshot.SessionId)
+                    if (current.State != "Streaming" || current.SessionId != snapshot.SessionId || current.FrameEpoch != snapshot.FrameEpoch)
                     {
                         ClearPreview();
                         return;
@@ -135,6 +137,7 @@ public sealed partial class MainWindow : Window
                 snapshot.State == "Disconnected" && receiver.Trust!.Phones.Any(p => !p.Revoked) ? "Phone paired · Capture stopped" :
                 $"Waiting for phone · {snapshot.State}";
             UpdatePairingUi();
+            UpdateCameraControls();
             DiagnosticsText.Text =
                 $"Received AU {snapshot.ReceivedAccessUnits} · decoded {snapshot.DecodedFrames} · displayed {displayed} " +
                 $"· superseded {snapshot.SupersededPreviewFrames} · queue {snapshot.FrameQueueDepth}/1 " +
