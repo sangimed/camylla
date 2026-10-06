@@ -182,7 +182,13 @@ No recording or broadcast was started. Camera images and unsanitized logs stay
 in local validation artifacts, outside Git.
 No screenshots from a locked/asleep device count as UI evidence.
 
-## Physical and visual acceptance still required
+## Remaining acceptance and deferred hardware coverage
+
+The user explicitly declined further S21 testing for this checkpoint. Its
+device-specific matrix is deferred and does not block the tablet-based review;
+no S21 compatibility PASS is claimed. The S21 references below describe future
+coverage, not work required before this checkpoint can be reviewed. User visual
+confirmation of the tablet images and physical lamp is still requested.
 
 1. Unlock the tablet and visually confirm the idle layout. The current app/test
    APKs are installed and all four instrumented tests pass. Confirm idle launch
