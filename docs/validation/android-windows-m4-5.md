@@ -89,19 +89,22 @@ Validated in this workspace on 2026-10-06:
 - Receiver `--pairing-self-test` and `--rotation-self-test`: passed, including
   one-use trust/binds, revocation, media exclusion and retired identity rejection.
 
-Earlier in this implementation session, `CameraProductTest` passed three
-instrumented tests on Xiaomi 2405CPCFBG: capability/persistence checks, real EGL
+The final `CameraProductTest` run passed all four instrumented tests on Xiaomi
+2405CPCFBG after reconnecting and installing the current app/test APKs:
+strict camera-wire parsing, capability/persistence checks, real EGL
 software brightness and clean encoder output despite preview aids, and all
 eight rendered rotation/mirror combinations with mapped focus coordinates.
-These use synthetic images and do not open a camera sensor. The current suite
-also includes strict camera-wire parsing (four tests total); its final rerun
-and installation are pending because the tablet disconnected from ADB.
+These use synthetic images and do not open a camera sensor. An idle app launch
+also left the bound capture service outside foreground capture (foreground
+start count zero). The tablet remains asleep/keyguard locked, preventing visual
+UI acceptance and a user-initiated capture check.
 No screenshots from a locked/asleep device count as UI evidence.
 
 ## Physical and visual acceptance still required
 
-1. Reconnect/unlock the tablet, install the current APK and run all four
-   `CameraProductTest` instrumented tests. Confirm idle launch does not capture.
+1. Unlock the tablet and visually confirm the idle layout. The current app/test
+   APKs are installed and all four instrumented tests pass. Confirm idle launch
+   does not capture.
 2. Launch the current Windows desktop build. On the phone, the user explicitly
    taps Start. Verify rear/front 720p30 and 1080p30 when exposed, actual delivered
    FPS, large preview, readable quick/advanced controls and reachable Stop in
