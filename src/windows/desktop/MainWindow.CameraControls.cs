@@ -91,7 +91,9 @@ public sealed partial class MainWindow
         {
             var c = editor.Capability;
             var value = state.Applied.GetValueOrDefault(c.Key, double.NaN);
-            var text = double.IsNaN(value) ? "Awaiting camera" : c.Choices.TryGetValue((int)value, out var name) ? name : $"{value:0.###} {c.Unit}";
+            var text = c.UnavailableReason != null ? "Unavailable" : double.IsNaN(value) ? "Awaiting camera" :
+                c.Key == "focusMode" && value == 1 ? "Tap autofocus" :
+                c.Choices.TryGetValue((int)value, out var name) ? name : $"{value:0.###} {c.Unit}";
             editor.Label.Text = $"{c.Label}: {text}" + (state.Pending.Contains(c.Key) ? " · Applying" : "") +
                 (c.UnavailableReason != null ? $"\nUnavailable: {c.UnavailableReason}" : "");
             if (editor.Dirty || !double.IsFinite(value)) continue;

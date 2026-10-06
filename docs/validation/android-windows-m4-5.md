@@ -103,8 +103,83 @@ rotation setting was restored after the check. This is idle-layout observation,
 not user-confirmed live framing or capture acceptance.
 
 The current Windows desktop was launched with existing remembered trust and
-listeners on 58413/58414. Its UI reports a paired phone with capture stopped;
-receiver counters remain zero. Live tests await the user's Start on the tablet.
+listeners on 58413/58414. The user then explicitly started capture on the tablet.
+The physical checkpoint below records that run and fixes found during it.
+
+## Physical tablet checkpoint, 2026-10-06
+
+Xiaomi 2405CPCFBG, Android 16 / BP2A.250605.031.A3; Windows 11 25H2;
+OBS 32.2.2 / WebSocket 5.7.4. The tablet exposes rear camera 0 (2.783 mm)
+and front camera 1 (1.93 mm), both with baseline 720p30/1080p30 metadata.
+The rear supports variable focus and torch; the front is fixed focus with
+manual focus, tap AF, lock and torch unavailable. No S21 Ultra was connected.
+
+The user started capture. The rear Camera2/GL/encoder path produced about
+30 encoded FPS. [Recorded stable intervals](evidence/m4-5-tablet-rates-2026-10-06.csv)
+exclude transitions and intervals with changing network-error counters:
+
+| Actual decoded size | Five-second intervals | Decoded FPS range | Windows displayed FPS range |
+| --- | --- | --- | --- |
+| 1280x720 | 64 | 28.56–30.35 | 15.65–22.31 |
+| 1920x1080 | 28 | 29.28–30.40 | 8.70–10.23 |
+
+These are short local observations, not an endurance/latency certification.
+Decode errors remained zero. The desktop preview does not present 30 FPS.
+Deliberate video-channel reconfiguration increments the diagnostic network-error
+counter for EOF; the original run reached four. Control stayed authenticated
+with the same session ID across lens/mode changes. A desktop close/reopen also
+recovered under the still-active phone authorization, without another Start.
+
+Observed camera-result acknowledgements from real authenticated Windows UI
+commands: zoom 2x and back; manual focus requested 3 diopters, actual 3.012;
+focus lock/unlock and return to continuous Auto; centre AF target followed by
+separate Focused/Not focused state; torch on/off; EV +3 steps; AE lock;
+manual exposure with ISO 200 and 10 ms; daylight/Auto/manual WB with red/blue
+gains 2 and WB lock; stabilization On and anti-flicker 50 Hz. Software brightness
+0.1, contrast 1.2, saturation 0.5, monitoring aids, output 90 degrees and output
+mirroring also completed. Rear/front and 720p/1080p changes resumed decoding.
+Manual focus requested at zero returned about 0.579 diopters and timed out;
+it was correctly not acknowledged as applied. This endpoint remains a device
+limitation to characterize, not a successful infinity-focus check.
+
+The mobile UI saved and loaded a temporary named preset during capture.
+After explicit Stop and APK replacement, the preset still appeared and was
+deleted through the mobile UI. App launch remained stopped. Start/Stop stayed
+visible while the Pro panel and preset dialogs were used. The newer APK,
+including the unavailable-value display fix below, is installed.
+
+OBS screenshots showed clean live camera output with preview aids enabled.
+Screenshot inspection is engineering evidence, not the user's visual acceptance
+of framing, physical light release, near/far focus or transformed tap targets.
+The final Stop was invoked through the phone's Stop button with torch confirmed
+On immediately beforehand. Camera clients were released, receiver controls and
+active buffers cleared, counters stopped and OBS became neutral black. Physical
+lamp confirmation is still awaiting the user's answer.
+
+### Fixes found and verified
+
+1. An unsupported torch-strength result contained an implausible raw device
+   value. Both UIs now display Unavailable with the reason; single tap AF has
+   a readable mode label. Android build/33 JVM tests and desktop build pass.
+   The corrected desktop labels were inspected on the live session.
+2. The existing native IPC consumer rejected a valid frame whose size differed
+   from its negotiated format. OBS fixed at 1080p became black after capture
+   switched to 720p. The source now resizes validated NV12 luma and paired UV
+   into the consumer's stable baseline format using nearest-neighbour sampling.
+   Same-size frames preserve stride handling. Tests cover both directions,
+   identity, padded rows, colour/chroma quadrants and input/output bounds;
+   both CTest suites pass. Direct native IPC probes received live frames in
+   fixed 720p and 1080p formats from the real 720p source. The Release DLL was
+   registered and subsequent OBS screenshots at fixed 1920x1080 showed live
+   720p capture, plus resumed live 1080p capture and neutral Stop output.
+
+The elevated reload helper reported FrameServer stop failures even though
+registration succeeded and the observed host PID changed; subsequent OBS
+behaviour confirms the resizing path, not a successful helper exit status.
+OBS test windows were closed; two headless processes left by OBS shutdown were
+terminated. Temporary WebSocket enablement was restored to its disabled state.
+No recording or broadcast was started. Camera images and unsanitized logs stay
+in local validation artifacts, outside Git.
 No screenshots from a locked/asleep device count as UI evidence.
 
 ## Physical and visual acceptance still required
@@ -112,8 +187,8 @@ No screenshots from a locked/asleep device count as UI evidence.
 1. Unlock the tablet and visually confirm the idle layout. The current app/test
    APKs are installed and all four instrumented tests pass. Confirm idle launch
    does not capture.
-2. Launch the current Windows desktop build. On the phone, the user explicitly
-   taps Start. Verify rear/front 720p30 and 1080p30 when exposed, actual delivered
+2. The tablet rear/front and mode paths above have been exercised. On S21 Ultra,
+   the user explicitly taps Start. Verify exposed 720p30/1080p30 and delivered
    FPS, large preview, readable quick/advanced controls and reachable Stop in
    portrait, landscape and tablet layouts.
 3. On S21 Ultra, exercise exposed optical cameras, manual/auto/tap focus and
@@ -124,7 +199,7 @@ No screenshots from a locked/asleep device count as UI evidence.
    exposure/WB, software adjustments and transforms. Check actual values,
    pending/errors, rapid slider supersession, timeout/cancel and stale responses.
    Verify focus reaches the intended point at zoom and every transform.
-5. Switch lens/mode during a live OBS consumer: require neutral output during
+5. Extend the tablet OBS checks to the S21 Ultra: require neutral output during
    binding, fresh configuration/keyframe, correct final dimensions/colors and no
    old image. Enable every preview aid and confirm OBS stays free of overlays.
 6. Restart app/service, apply/reset/delete presets and change available device

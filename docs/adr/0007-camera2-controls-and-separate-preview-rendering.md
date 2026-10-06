@@ -39,6 +39,15 @@ capture or restore light/locks. Source changes preserve authenticated control,
 invalidate pending commands and cached frames, renew the video ticket and
 require fresh codec configuration/keyframe.
 
+Physical tablet tests found that the native IPC source rejected a capture size
+different from the consumer's negotiated size. The source now resizes validated
+NV12 Y and paired UV planes between the two baseline 16:9 modes, preserving
+consumer dimensions and cadence through phone mode changes. Nearest-neighbour
+sampling is deliberately simple and bounded; upscaling adds no captured detail.
+Both resize directions, padding and bounds have tests, and OBS at fixed 1080p
+received the real 720p phone stream after deployment. Device/visual acceptance
+remains distinct from this engineering evidence.
+
 Relevant platform contracts: [CameraCharacteristics](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics),
 [CaptureRequest](https://developer.android.com/reference/android/hardware/camera2/CaptureRequest),
 [CaptureResult](https://developer.android.com/reference/android/hardware/camera2/CaptureResult)

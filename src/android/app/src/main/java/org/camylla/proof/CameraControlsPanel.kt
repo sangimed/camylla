@@ -78,7 +78,10 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
         }
         for (row in rows) {
             val o = row.option; val value = status.applied[o.key]
-            val display = value?.let { o.choices[it.toInt()] ?: String.format(Locale.US, "%.3f %s", it, o.unit) } ?: "Awaiting camera"
+            val display = if (o.reason != null) "Unavailable" else value?.let {
+                if (o.key == "focusMode" && it == 1.0) "Tap autofocus"
+                else o.choices[it.toInt()] ?: String.format(Locale.US, "%.3f %s", it, o.unit)
+            } ?: "Awaiting camera"
             row.label.text = "${o.label}: $display${if (o.key in status.pending) " · Applying" else ""}${o.reason?.let { "\nUnavailable: $it" } ?: ""}"
             if (value != null && row.slider != null && !row.dragging && o.max > o.min && o.key !in status.pending)
                 row.slider.progress = ((value - o.min) / (o.max - o.min) * 1000).toInt().coerceIn(0,1000)
