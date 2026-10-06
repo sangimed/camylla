@@ -96,8 +96,15 @@ software brightness and clean encoder output despite preview aids, and all
 eight rendered rotation/mirror combinations with mapped focus coordinates.
 These use synthetic images and do not open a camera sensor. An idle app launch
 also left the bound capture service outside foreground capture (foreground
-start count zero). The tablet remains asleep/keyguard locked, preventing visual
-UI acceptance and a user-initiated capture check.
+start count zero). After the user reconnected/unlocked the tablet, inspection
+of actual idle screenshots in portrait and landscape confirmed the large
+preview placeholder, readable controls and persistent Start/Stop. The original
+rotation setting was restored after the check. This is idle-layout observation,
+not user-confirmed live framing or capture acceptance.
+
+The current Windows desktop was launched with existing remembered trust and
+listeners on 58413/58414. Its UI reports a paired phone with capture stopped;
+receiver counters remain zero. Live tests await the user's Start on the tablet.
 No screenshots from a locked/asleep device count as UI evidence.
 
 ## Physical and visual acceptance still required
