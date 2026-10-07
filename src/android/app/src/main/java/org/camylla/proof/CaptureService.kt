@@ -47,6 +47,7 @@ class CaptureService : LifecycleService() {
     internal fun cameras(): List<CameraEntry> = CameraCatalog.list(getSystemService(CameraManager::class.java))
     fun stats(): StatsSnapshot = snapshot.copy(elapsedSeconds = if (sessionStartMs == 0L) 0 else (SystemClock.elapsedRealtime() - sessionStartMs) / 1000,
         network = networkSender?.stats() ?: NetworkProgress())
+    fun retryConnection() { if (sessionStartMs != 0L) networkSender?.retryNow() }
     override fun onBind(intent: Intent): IBinder { super.onBind(intent); return binder }
     override fun onCreate() {
         super.onCreate()

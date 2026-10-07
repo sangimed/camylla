@@ -83,6 +83,9 @@ class NetworkSender(
 
     fun stats(): NetworkProgress = progress
 
+    /** Skip only the current backoff. The worker still owns all connection attempts. */
+    fun retryNow() { if (!stopping) retryWaiter.retryNow() }
+
     fun reconfigure(nextMode: String, nextLens: String, nextGeneration: Int) = synchronized(lock) {
         cameraRecord(JSONObject().put("type", "camera_changing").put("generation", nextGeneration))
         appliedCameraGeneration = 0

@@ -13,6 +13,8 @@
         <StackPanel Grid.Row="0" Spacing="6">
             <TextBlock Text="Camylla" FontSize="26" FontWeight="SemiBold" />
             <TextBlock x:Name="StateText" Text="Waiting for phone" />
+            <TextBlock x:Name="RecoveryHelp" TextWrapping="Wrap" />
+            <Button x:Name="RetryReceiverButton" Content="Retry PC listener" Click="OnRetryReceiver" Visibility="Collapsed" />
         </StackPanel>
         <Border Grid.Row="1" Background="#FF20252B" MinHeight="360" CornerRadius="8">
             <Grid>
@@ -46,7 +48,9 @@
                 </StackPanel>
             </Expander>
         </StackPanel>
-        <TextBlock x:Name="DiagnosticsText" Grid.Row="3" TextWrapping="Wrap" />
+        <Expander Grid.Row="3" Header="Diagnostics">
+            <TextBlock x:Name="DiagnosticsText" TextWrapping="Wrap" />
+        </Expander>
         <ContentDialog x:Name="PairDialog" Title="Connect your phone" CloseButtonText="Close" Closed="OnPairClosed">
             <StackPanel Spacing="12">
                 <TextBlock Text="Open Camylla on your phone and scan this QR." TextWrapping="Wrap" />
