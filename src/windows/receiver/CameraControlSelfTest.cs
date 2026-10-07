@@ -96,7 +96,11 @@ internal static partial class ProductionSelfTest
             Check(Wire.RequiredString(ready.RootElement,"type") == "ready" && Wire.RequiredString(sync.RootElement,"type") == "sync",
                 "reconfigured video requires a fresh configuration/keyframe");
             await Capability("zoom",generation:3); await State(3);
-            await WaitFor(() => host.CameraControls().Generation == 3);
+            await WaitFor(() => {
+                var camera = host.CameraControls();
+                return camera.Generation == 3 && camera.Capabilities.ContainsKey("zoom") &&
+                    camera.Applied.GetValueOrDefault("zoom") == 1;
+            });
             var stopped = host.SetCameraControlAsync("zoom", 2, lifetime.Token);
             using var finalCommand = await Wire.ReadControlAsync(control, lifetime.Token);
             await Wire.WriteControlAsync(control, new { type = "stop", version = 3, session_id = id }, lifetime.Token);
