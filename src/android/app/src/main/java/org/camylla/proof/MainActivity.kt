@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var captureControls: LinearLayout
     private lateinit var trustControls: LinearLayout
     private lateinit var connectionStatus: TextView
+    private lateinit var retryConnection: Button
     private lateinit var resumeKeyChange: Button
     private var trustedDesktops: List<TrustedDesktop> = emptyList()
     private val identity get() = ProductIdentity(this)
@@ -213,7 +214,10 @@ class MainActivity : Activity() {
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val start = Button(this).apply { text = "Start camera"; setOnClickListener { startWithPermission() } }
         val stop = Button(this).apply { text = "Stop camera"; setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
-        actions.addView(start, LinearLayout.LayoutParams(0,-2,1f)); actions.addView(stop, LinearLayout.LayoutParams(0,-2,1f)); root.addView(actions)
+        retryConnection = Button(this).apply { text = "Retry now"; setOnClickListener { service?.retryConnection() } }
+        actions.addView(start, LinearLayout.LayoutParams(0,-2,1f))
+        actions.addView(retryConnection, LinearLayout.LayoutParams(0,-2,1f))
+        actions.addView(stop, LinearLayout.LayoutParams(0,-2,1f)); root.addView(actions)
         setContentView(root)
         modes.setSelection(CaptureService.Mode.fromName(CameraSettings(this).preferredMode).ordinal)
         showStats()
@@ -297,13 +301,12 @@ class MainActivity : Activity() {
         if (::lensChoice.isInitialized) lensChoice.text = if (value.camera.isNotEmpty()) "Camera: ${value.camera}" else "Choose optical camera"
         service?.displayRotation(when (windowManager.defaultDisplay.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_180 -> 180; android.view.Surface.ROTATION_270 -> 270; else -> 0 })
         desktops.isEnabled = value.state == "Stopped"
+        retryConnection.visibility = if (value.state == "Capturing" && value.network.state == "Recovering") View.VISIBLE else View.GONE
         connectionStatus.text = when {
             trustError.isNotEmpty() -> trustError
             runCatching { identity.pendingRotation != null }.getOrDefault(false) -> "Security key change pending. Resume or repair pairing before capture."
             trustedDesktops.isEmpty() -> "Connect your PC by scanning its QR."
-            value.state == "Stopped" -> "Connected to ${trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "your PC"}. Ready to start."
-            value.error.isNotEmpty() -> value.error
-            else -> value.state
+            else -> ConnectionStatus.message(value, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "your PC")
         }
         stats.text = """
             ${if (trustError.isNotEmpty()) trustError else ""}

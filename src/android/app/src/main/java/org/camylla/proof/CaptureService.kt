@@ -47,6 +47,7 @@ class CaptureService : LifecycleService() {
     internal fun cameras(): List<CameraEntry> = CameraCatalog.list(getSystemService(CameraManager::class.java))
     fun stats(): StatsSnapshot = snapshot.copy(elapsedSeconds = if (sessionStartMs == 0L) 0 else (SystemClock.elapsedRealtime() - sessionStartMs) / 1000,
         network = networkSender?.stats() ?: NetworkProgress())
+    fun retryConnection() { if (sessionStartMs != 0L) networkSender?.retryNow() }
     override fun onBind(intent: Intent): IBinder { super.onBind(intent); return binder }
     override fun onCreate() {
         super.onCreate()
@@ -82,7 +83,8 @@ class CaptureService : LifecycleService() {
                             if (remoteSessionId != id) { remoteSessionId = id; lastRemoteId = 0 }
                             publishNetwork(true)
                         } } },
-                        { message, reply -> main.post { remote(message, reply) } })
+                        { message, reply -> main.post { remote(message, reply) } },
+                        { main.post { if (sessionStartMs != 0L) { endSession(); stopSelf() } } })
                     settings.preferredPeer = peer.id
                     bindCamera(settings.values(entry!!.id, mode.name))
                 } catch (error: Exception) { endSession(); fail(error.message ?: "Capture setup failed"); stopSelf() }

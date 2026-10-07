@@ -82,6 +82,33 @@ class RecoveryStateTest {
         assertTrue(done.await(500, TimeUnit.MILLISECONDS))
     }
 
+    @Test fun manualRetrySkipsOneBackoffWithoutCreatingAnotherWorker() {
+        val waiter = RetryWaiter()
+        waiter.retryNow() // The tap can arrive just before the worker starts waiting.
+        val start = System.nanoTime()
+        waiter.waitFor(4_000)
+        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) < 500)
+        val entered = CountDownLatch(1)
+        val done = CountDownLatch(1)
+        Thread { entered.countDown(); waiter.waitFor(4_000); done.countDown() }.start()
+        assertTrue(entered.await(1, TimeUnit.SECONDS))
+        waiter.retryNow()
+        assertTrue(done.await(500, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun currentConnectionMessageIgnoresHistoricalFailureAfterStreaming() {
+        val recovered = StatsSnapshot(state = "Capturing", network = NetworkProgress(
+            state = "Streaming", networkErrors = 9, error = ""))
+        assertEquals("Streaming to PC", ConnectionStatus.message(recovered, "PC"))
+        val lost = recovered.copy(network = recovered.network.copy(state = "Recovering", error = "Connection refused"))
+        assertTrue(ConnectionStatus.message(lost, "PC").contains("firewall"))
+        assertTrue(ConnectionStatus.message(lost, "PC").contains("Retry now"))
+        val busy = lost.copy(network = lost.network.copy(error = "session_busy"))
+        assertTrue(ConnectionStatus.message(busy, "PC").contains("Another phone session"))
+        val denied = StatsSnapshot(state = "Error", error = "Camera permission required")
+        assertTrue(ConnectionStatus.message(denied, "PC").contains("Android Settings"))
+    }
+
     @Test fun resetDropsStalePayloadsAndRequiresFreshConfigAndKey() {
         val queue = RecoveryQueue<ByteArray>({ it.size }, { it[0] == 2.toByte() })
         val gate = SyncGate()

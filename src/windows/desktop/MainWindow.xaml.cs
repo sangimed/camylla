@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Debug.WriteLine(error); }
         timer.Tick += OnTick;
         Closed += OnClosed;
+        InitializeTray();
         receiver.Log += message =>
         {
             if (!message.StartsWith("Development session secret:", StringComparison.Ordinal))
@@ -132,10 +133,13 @@ public sealed partial class MainWindow : Window
                 snapshot.State == "Streaming";
             WaitingText.Visibility = fresh ? Visibility.Collapsed : Visibility.Visible;
             if (!fresh) ClearPreview();
-            StateText.Text = lastError != null ? $"Receiver error: {lastError}" :
-                fresh ? $"Streaming · {snapshot.Width} × {snapshot.Height}" :
-                snapshot.State == "Disconnected" && receiver.Trust!.Phones.Any(p => !p.Revoked) ? "Phone paired · Capture stopped" :
-                $"Waiting for phone · {snapshot.State}";
+            if (fresh && receiverTask is { IsCompletedSuccessfully: false, IsFaulted: false }) lastError = null;
+            var status = ConnectionPresentation.Describe(snapshot.State, fresh,
+                receiver.Trust!.Phones.Any(p => !p.Revoked), receiverTask?.IsFaulted == true, lastError,
+                snapshot.Width, snapshot.Height, snapshot.ConnectionIssue);
+            StateText.Text = status.Title;
+            RecoveryHelp.Text = status.Help;
+            RetryReceiverButton.Visibility = receiverTask?.IsFaulted == true ? Visibility.Visible : Visibility.Collapsed;
             UpdatePairingUi();
             UpdateCameraControls();
             DiagnosticsText.Text =
@@ -151,6 +155,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception error)
         {
+            Debug.WriteLine(error);
             lastError = error.Message;
         }
         finally { rendering = false; }
@@ -159,6 +164,7 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         closing = true;
+        DisposeTray();
         timer.Stop();
         stop.Cancel();
         receiver.Stop();
@@ -173,6 +179,16 @@ public sealed partial class MainWindow : Window
         diagnosticsLog?.Dispose();
         lock (eventLogGate) { receiverEventLog?.Dispose(); receiverEventLog = null; }
         ClearPreview();
+    }
+
+    private void OnRetryReceiver(object sender, RoutedEventArgs args)
+    {
+        if (closing || receiverTask?.IsFaulted != true) return;
+        lastError = null;
+        receiverTask = Task.Run(() => receiver.RunAsync(stop.Token));
+        RetryReceiverButton.Visibility = Visibility.Collapsed;
+        StateText.Text = "Starting PC listener…";
+        RecoveryHelp.Text = "Keep Camylla open on the PC, then retry from the phone if needed.";
     }
 
     private void WriteDiagnostics(ReceiverSnapshot snapshot)

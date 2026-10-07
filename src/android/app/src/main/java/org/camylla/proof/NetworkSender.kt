@@ -34,6 +34,7 @@ class NetworkSender(
     private val requestSyncFrame: () -> Unit,
     private val onCameraSession: (String) -> Unit = {},
     private val onCameraCommand: (JSONObject, (JSONObject) -> Unit) -> Unit = { _, _ -> },
+    private val onDesktopStop: () -> Unit = {},
 ) : AutoCloseable {
     private data class PendingUnit(val payload: ByteArray, val ptsUs: Long, val flag: Int,
                                    val queuedNs: Long, val generation: Int)
@@ -82,6 +83,9 @@ class NetworkSender(
     }
 
     fun stats(): NetworkProgress = progress
+
+    /** Skip only the current backoff. The worker still owns all connection attempts. */
+    fun retryNow() { if (!stopping) retryWaiter.retryNow() }
 
     fun reconfigure(nextMode: String, nextLens: String, nextGeneration: Int) = synchronized(lock) {
         cameraRecord(JSONObject().put("type", "camera_changing").put("generation", nextGeneration))
@@ -331,6 +335,16 @@ class NetworkSender(
                         require(rebindTickets.offer(message)) { "Unexpected extra video ticket" }
                     }
                     "error" -> throw IllegalStateException(message.optString("code", "Receiver rejected session"))
+                    "stop_request" -> {
+                        M4Wire.record(message, "stop_request", "session_id")
+                        require(message.getString("session_id") == sessionId) { "Obsolete stop request" }
+                        runCatching { writeControl(control, JSONObject().put("type", "stopped").put("version", 3)
+                            .put("session_id", sessionId).toString()) }
+                        stopping = true
+                        retryWaiter.cancel()
+                        onDesktopStop()
+                        return
+                    }
                     else -> throw IllegalStateException("Unknown control message")
                 }
             }

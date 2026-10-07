@@ -81,8 +81,14 @@ internal class RecoveryQueue<T>(private val sizeOf: (T) -> Int, private val isCo
 internal class RetryWaiter {
     private val monitor = Object()
     private var cancelled = false
+    private var retryRequested = false
     fun waitFor(delayMs: Long) = synchronized(monitor) {
-        if (!cancelled) monitor.wait(delayMs)
+        if (!cancelled && !retryRequested) monitor.wait(delayMs)
+        retryRequested = false
+    }
+    fun retryNow() = synchronized(monitor) {
+        retryRequested = true
+        monitor.notifyAll()
     }
     fun cancel() = synchronized(monitor) {
         cancelled = true
