@@ -1,5 +1,6 @@
 #include "camylla/virtual_camera/cadence.h"
 #include "camylla/virtual_camera/ipc_protocol.h"
+#include "camylla/virtual_camera/nv12_resize.h"
 #include "camylla/virtual_camera/synthetic_frame_provider.h"
 #include "camylla/virtual_camera/video_mode.h"
 
@@ -99,6 +100,35 @@ void ChecksIpcFrameBoundsAndFreshness() {
     Check(!ParseIpcHeader(bytes, 1000, parsed), "reserved bytes must be zero");
 }
 
+void ChecksResizingPreservesNegotiatedModeAndChroma() {
+    using namespace camylla::virtual_camera;
+    for (const auto source : SupportedModes()) for (const auto target : SupportedModes()) {
+        const auto stride = source.width + 16;
+        std::vector<std::uint8_t> input(static_cast<std::size_t>(stride) * source.height * 3 / 2, 239);
+        for (std::uint32_t y = 0; y < source.height; ++y) for (std::uint32_t x = 0; x < source.width; ++x)
+            input[static_cast<std::size_t>(y) * stride + x] = static_cast<std::uint8_t>((x < source.width/2 ? 50 : 180) + (y < source.height/2 ? 0 : 20));
+        const auto uv = static_cast<std::size_t>(stride) * source.height;
+        for (std::uint32_t y = 0; y < source.height/2; ++y) for (std::uint32_t x = 0; x < source.width/2; ++x) {
+            input[uv + static_cast<std::size_t>(y)*stride + x*2] = x < source.width/4 ? 40 : 80;
+            input[uv + static_cast<std::size_t>(y)*stride + x*2+1] = y < source.height/4 ? 120 : 160;
+        }
+        std::vector<std::uint8_t> guarded(Nv12FrameSize(target)+2, 253);
+        auto output = std::span<std::uint8_t>(guarded).subspan(1, Nv12FrameSize(target));
+        Check(ResizeNv12(input,source,stride,output,target), "both baseline sizes resize into the fixed consumer mode");
+        for (std::uint32_t y = 0; y < target.height; ++y) for (std::uint32_t x = 0; x < target.width; ++x)
+            Check(output[static_cast<std::size_t>(y)*target.width+x] == (x < target.width/2 ? 50 : 180)+(y < target.height/2 ? 0 : 20), "luma quadrants survive resizing and padding is excluded");
+        const auto output_uv = static_cast<std::size_t>(target.width)*target.height;
+        for (std::uint32_t y = 0; y < target.height/2; ++y) for (std::uint32_t x = 0; x < target.width/2; ++x) {
+            Check(output[output_uv + static_cast<std::size_t>(y)*target.width+x*2] == (x < target.width/4 ? 40 : 80), "U samples stay paired and correctly scaled");
+            Check(output[output_uv + static_cast<std::size_t>(y)*target.width+x*2+1] == (y < target.height/4 ? 120 : 160), "V samples stay paired and correctly scaled");
+        }
+        Check(guarded.front() == 253 && guarded.back() == 253, "resize stays within output bounds");
+        Check(!ResizeNv12(std::span<const std::uint8_t>(input).first(1),source,stride,output,target), "truncated input rejected");
+        Check(!ResizeNv12(input,source,source.width-1,output,target), "invalid stride rejected");
+        Check(!ResizeNv12(input,source,stride,output.first(1),target), "undersized output rejected");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -106,5 +136,6 @@ int main() {
     ChecksCadenceWithoutLongTermDrift();
     ChecksSyntheticFramesAreDeterministicAndComplete();
     ChecksIpcFrameBoundsAndFreshness();
+    ChecksResizingPreservesNegotiatedModeAndChroma();
     return EXIT_SUCCESS;
 }

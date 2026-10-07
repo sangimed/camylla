@@ -1,6 +1,7 @@
 #include "camylla/virtual_camera/ipc_frame_provider.h"
 
 #include "camylla/virtual_camera/cadence.h"
+#include "camylla/virtual_camera/nv12_resize.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -135,16 +136,11 @@ Nv12Frame IpcFrameProvider::NextFrame(std::uint64_t frame_index) {
         Disconnect(); return frame;
     }
     if (GetTickCount64() > header.captured_ms + kMaxFrameAgeMs) return frame;
-    if (header.width != mode_.width || header.height != mode_.height ||
-        (header.generation == generation_ && header.sequence < last_sequence_)) return frame;
+    if (header.generation == generation_ && header.sequence < last_sequence_) return frame;
     generation_ = header.generation;
     last_sequence_ = header.sequence;
-    const auto source_stride = static_cast<std::size_t>(header.stride);
-    const auto output_stride = static_cast<std::size_t>(mode_.width);
-    for (std::size_t y = 0; y < mode_.height * 3U / 2U; ++y) {
-        std::copy_n(input_.data() + y * source_stride, output_stride,
-                    frame.bytes.data() + y * output_stride);
-    }
+    ResizeNv12(std::span<const std::uint8_t>(input_.data(), header.length),
+               {header.width, header.height, 30}, header.stride, frame.bytes, mode_);
     return frame;
 }
 

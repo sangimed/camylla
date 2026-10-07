@@ -22,6 +22,7 @@ public sealed partial class ReceiverHost
         public TcpClient? Video { get; set; }
         public TaskCompletionSource? VideoEnded { get; set; }
         public HashSet<string> RebindNonces { get; } = [];
+        public int LastCameraReconfiguration { get; set; }
         public string NewTicket()
         {
             var ticket = ProductionTrust.RandomHex(32);
@@ -162,9 +163,25 @@ public sealed partial class ReceiverHost
                         security.Video?.Dispose(); ClearFrames();
                         break;
                     }
-                    if (kind == "video_rebind")
+                    if (kind == "camera_changing")
                     {
-                        V3Record.Require(message.RootElement, kind, "session_id", "request_nonce");
+                        V3Record.Require(message.RootElement, kind, "session_id", "generation");
+                        if (V3Record.Hex(message.RootElement, "session_id", 16) != session.Id || Wire.RequiredInt(message.RootElement, "generation") < 1)
+                            throw new InvalidDataException("stale_session");
+                        lock (Gate) { session.BeginCameraChange(); ClearFrames(); }
+                        BeginCameraControlsChange(session, Wire.RequiredInt(message.RootElement, "generation"));
+                        continue;
+                    }
+                    if (kind is "camera_capability" or "camera_state" or "camera_result")
+                    {
+                        ReceiveCameraRecord(session, message.RootElement);
+                        continue;
+                    }
+                    if (kind is "video_rebind" or "camera_reconfigure")
+                    {
+                        if (kind == "camera_reconfigure")
+                            V3Record.Require(message.RootElement, kind, "session_id", "request_nonce", "mode", "lens", "generation");
+                        else V3Record.Require(message.RootElement, kind, "session_id", "request_nonce");
                         if (V3Record.Hex(message.RootElement, "session_id", 16) != session.Id) throw new AuthenticationException("stale_session");
                         var nonce = V3Record.Hex(message.RootElement, "request_nonce", 16);
                         Task? drained;
@@ -174,7 +191,20 @@ public sealed partial class ReceiverHost
                             security.Consumed = true; security.Video?.Dispose(); drained = security.VideoEnded?.Task;
                         }
                         if (drained != null) await drained.WaitAsync(TimeSpan.FromSeconds(3), lifetime.Token);
-                        lock (Gate) ticket = security.NewTicket();
+                        lock (Gate)
+                        {
+                            if (kind == "camera_reconfigure")
+                            {
+                                var nextMode = Wire.RequiredString(message.RootElement, "mode");
+                                var nextLens = Wire.RequiredString(message.RootElement, "lens");
+                                if (nextMode is not ("1280x720@30" or "1920x1080@30") || nextLens is not ("front" or "rear") ||
+                                    Wire.RequiredInt(message.RootElement, "generation") <= security.LastCameraReconfiguration) throw new InvalidDataException("mode_unsupported");
+                                security.LastCameraReconfiguration = Wire.RequiredInt(message.RootElement, "generation");
+                                session.Mode = nextMode; session.Lens = nextLens;
+                                ClearFrames();
+                            }
+                            ticket = security.NewTicket();
+                        }
                         await session.SendAsync(new { type = "video_ticket", version = 3, session_id = session.Id,
                             request_nonce = nonce, video_ticket = ticket }, lifetime.Token);
                         continue;
@@ -201,6 +231,7 @@ public sealed partial class ReceiverHost
                 Trust!.DetachRotationControl(connection);
                 if (session != null)
                 {
+                    ClearCameraSession(session);
                     session.Stop();
                     lock (Gate) if (active == session) { productionSession?.Video?.Dispose(); active = null; productionSession = null; ClearFrames(); }
                 }

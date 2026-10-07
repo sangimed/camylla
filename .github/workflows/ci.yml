@@ -54,6 +54,8 @@ jobs:
         run: dotnet src/windows/receiver/bin/Debug/net10.0-windows/Camylla.Receiver.dll --pairing-self-test
       - name: Run production identity rotation tests
         run: dotnet src/windows/receiver/bin/Debug/net10.0-windows/Camylla.Receiver.dll --rotation-self-test
+      - name: Run authenticated camera control tests
+        run: dotnet src/windows/receiver/bin/Debug/net10.0-windows/Camylla.Receiver.dll --camera-controls-self-test
       - name: Run Media Foundation decoder smoke test
         run: dotnet run --project src/windows/receiver/Camylla.Receiver.csproj -c Debug --no-build -- --decoder-smoke
       - name: Run pooled 720p30 frame memory smoke test

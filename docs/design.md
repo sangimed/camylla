@@ -34,13 +34,14 @@ Reference implementations have been inspected at pinned commits; see [source ins
 - Wi-Fi connection, live preview, camera selection, basic image controls, persistent settings, and reliable reconnection.
 - Standalone desktop app with its own setup, preview, controls, and settings; no OBS installation or shell. Exact workflows remain open.
 - Front/rear selection, orientation, zoom, continuous autofocus, and explicit output mirroring; preview mirroring is a separate setting.
+- Expanded #26 scope (user decision, 2026-10-05): a mobile camera interface with tap focus, focus lock/manual focus, torch, exposure/ISO/shutter, white-balance and image controls, framing aids and reusable preferences, exposing only actual supported capabilities. See [camera controls and UX brief](camera-controls-ux.md). These controls are now M4 work rather than deferred features; no hardware or implementation PASS is implied.
 - User starts the session from the phone. Continued streaming during app switching and screen-off is required on tested devices, with a visible notification and stop action.
 - Reliable 30-FPS operation is the core requirement. 60 FPS is optional, capability-dependent and best-effort; fall back to 30 FPS if unsupported or unsustainable. Failure to deliver 60 FPS does not block v1 or force a more complex architecture.
 - Current target phone: Samsung S21 Ultra (supersedes the earlier S20 Ultra statement). Android is reportedly above 10, possibly 13; exact version is unverified.
 
 ## 5. Deferred features
 
-All audio (capture, transport, playback, microphone permissions, virtual microphone), USB, multiple phones/scene composition, recording, advanced manual focus/exposure controls, torch, and tap-to-focus. Unattended remote start and boot-start capture are excluded from v1. OBS fork, libobs embedding, and a Camylla OBS plugin are excluded. No separate receiver service, mandatory cloud service, automatic updater, Store publication, or cross-platform UI requirement. 4K/high-FPS validation is deferred; 60 FPS is optional, not a launch gate. Do not deliberately cap modes proven sustainable on a supported configuration.
+All audio (capture, transport, playback, microphone permissions, virtual microphone), USB, multiple phones/scene composition, and recording. Manual focus/exposure, torch and tap-to-focus moved into #26 on 2026-10-05. Unattended remote start and boot-start capture are excluded from v1. OBS fork, libobs embedding, and a Camylla OBS plugin are excluded. No separate receiver service, mandatory cloud service, automatic updater, Store publication, or cross-platform UI requirement. 4K/high-FPS validation is deferred; 60 FPS is optional, not a launch gate. Do not deliberately cap modes proven sustainable on a supported configuration.
 
 ## 6. Proposed architecture
 
@@ -50,7 +51,7 @@ Accepted implementation direction: Kotlin Android app; WinUI 3/C# desktop UI wit
 
 ```mermaid
 flowchart LR
-    A[Android camera] --> B[CameraX or justified Camera2 fallback]
+    A[Android camera] --> B[Camera2 controls and EGL rendering]
     B --> C[MediaCodec H.264]
     C --> D[Authenticated TLS video connection]
     D --> E[Desktop user process: MF decode and D3D]
@@ -66,6 +67,8 @@ The diagram shows responsibility boundaries, not yet finalized socket endpoints 
 
 ## 7. Android architecture
 
+M4.5 implementation update, 2026-10-06: the expanded controls use Camera2 capture requests/results and a shared EGL texture with independent preview and encoder passes. [ADR 0007](adr/0007-camera2-controls-and-separate-preview-rendering.md) records the requirements gap and lifecycle trade-offs. The earlier CameraX proof below remains historical feasibility evidence; this replacement still requires physical camera, cadence, torch and visual acceptance in the [M4.5 matrix](validation/android-windows-m4-5.md).
+
 Capture API evaluation strategy: CameraX first, with Camera2 only for demonstrated requirements gaps. The S21 Ultra physical proof used CameraX `Preview.SurfaceProvider` with a MediaCodec encoder input surface and measured about 29.9 encoded FPS at rear 720p30. CameraX offers lifecycle/control abstractions but requested frame rate is a target; Camera2 offers explicit session/request control with more device-handling work. The CameraX-first direction survived M2. Detailed thermal/battery, other-mode, and device coverage remains later validation. Android 10+ is the provisional minimum, with device/capability testing rather than blanket compatibility promises.
 
 For 60 FPS, intersect per-camera target FPS ranges, encoder-compatible sizes, all output minimum frame durations, and encoder size/rate capabilities, then measure delivered frames. [StreamConfigurationMap](https://developer.android.com/reference/android/hardware/camera2/params/StreamConfigurationMap) and [VideoCapabilities](https://developer.android.com/reference/android/media/MediaCodecInfo.VideoCapabilities) provide relevant capability queries. [Constrained high-speed capture](https://developer.android.com/reference/android/hardware/camera2/CameraConstrainedHighSpeedCaptureSession) is intended for 120+ FPS, not the default 60-FPS path. Android foreground camera-service restrictions must shape session start/resume behavior: [official requirements](https://developer.android.com/develop/background-work/services/fgs/service-types).
@@ -73,6 +76,8 @@ For 60 FPS, intersect per-camera target FPS ranges, encoder-compatible sizes, al
 Bind capture ownership to the explicit camera session and appropriately started camera foreground service, not merely whether the activity is visible. Request camera permission with an explanation; request no microphone permission. Advertise capabilities rather than assuming every lens supports every control. Pause/report camera loss, revoked permissions and thermal pressure clearly. Exact disconnected-session resource timeouts and lifecycle transitions belong in the session specification before implementation.
 
 ## 8. Desktop architecture
+
+The M4.5 control path delegates supported sensor controls and encoded output transforms to the phone; Windows supplies authenticated commands and shows camera-confirmed state. Phone preview mirroring and monitoring aids remain independent of encoded webcam output. This supersedes the original desktop ownership proposal for those transforms below; the current encoder keeps the selected landscape canvas and letterboxes quarter-turn output.
 
 WinUI 3/C# with narrow native C++ media components accepted, conditional on deployment and preview-integration validation. Alternatives: WPF (mature tooling, less Windows App SDK coupling); WinUI 3/C++/WinRT (fewer languages, more XAML/WinRT complexity); Qt/C++ (mature widgets/common language, deployment and Windows styling effort). Windows-only v1 removes cross-platform UI as a requirement. Selection prioritizes native Windows appearance and keeping UI logic out of the media implementation, rather than familiarity with a framework.
 

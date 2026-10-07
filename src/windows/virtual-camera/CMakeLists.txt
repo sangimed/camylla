@@ -1,6 +1,7 @@
 add_library(camylla_virtual_camera_core
     src/cadence.cpp
     src/ipc_protocol.cpp
+    src/nv12_resize.cpp
     src/synthetic_frame_provider.cpp
     src/video_mode.cpp
 )

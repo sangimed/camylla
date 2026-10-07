@@ -33,4 +33,24 @@ object M4Wire {
         require(value.getString("type") == type && value.getInt("version") == VERSION) { "Unsupported protocol response" }
         require(value.keys().asSequence().toSet() == fields.toSet() + setOf("type", "version")) { "Invalid response fields" }
     }
+    fun cameraRequest(value: JSONObject) {
+        when (value.getString("type")) {
+            "camera_command" -> {
+                record(value,"camera_command","session_id","generation","request_id","control","value")
+                val control = value.get("control")
+                require(control is String && control.length in 1..40)
+                require(value.get("value") is Number && value.getDouble("value").isFinite())
+            }
+            "camera_focus" -> {
+                record(value,"camera_focus","session_id","generation","request_id","x","y")
+                for (key in listOf("x","y")) require(value.get(key) is Number && value.getDouble(key).isFinite() && value.getDouble(key) in 0.0..1.0)
+            }
+            "camera_cancel" -> record(value,"camera_cancel","session_id","generation","request_id")
+            else -> throw IllegalArgumentException("Unknown camera command")
+        }
+        hex16(value.getString("session_id"))
+        val id = value.get("request_id"); val generation = value.get("generation")
+        require((id is Int || id is Long) && (id as Number).toLong() > 0)
+        require((generation is Int || generation is Long) && (generation as Number).toLong() in 1..Int.MAX_VALUE.toLong())
+    }
 }

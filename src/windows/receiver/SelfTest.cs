@@ -87,6 +87,7 @@ internal static class SelfTest
         bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 1 ? 3 :
         bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 0 && bytes[i + 3] == 1 ? 4 : 0;
 
+    private static readonly string TestPipeName = "CamyllaTest-" + Guid.NewGuid().ToString("N");
     public static async Task RunAsync()
     {
         TestOwnedLatestFrames();
@@ -136,13 +137,14 @@ internal static class SelfTest
     {
         using var host = new ReceiverHost();
         var streaming = 1;
+        var publicationEpoch = 1;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var header = new byte[CameraPipePublisher.HeaderBytes];
         await using (var publisher = new CameraPipePublisher(host, () =>
-            (Volatile.Read(ref streaming) == 1, "synthetic-session")))
+            (Volatile.Read(ref streaming) == 1, "synthetic-session-" + Volatile.Read(ref publicationEpoch)), TestPipeName))
         {
         publisher.Start();
-        using var client = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+        using var client = new NamedPipeClientStream(".", TestPipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
         await client.ConnectAsync(timeout.Token);
         await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
@@ -159,6 +161,10 @@ internal static class SelfTest
         var received = new byte[pixels.Length];
         await client.ReadExactlyAsync(received, timeout.Token);
         Check(received.AsSpan().SequenceEqual(pixels), "camera pipe preserves NV12 bytes");
+        Interlocked.Increment(ref publicationEpoch);
+        await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        await client.ReadExactlyAsync(header, timeout.Token);
+        Check(header[6] == 0, "camera generation change cannot publish a cached previous-generation frame");
         await Task.Delay(550, timeout.Token);
         await client.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
         await client.ReadExactlyAsync(header, timeout.Token);
@@ -184,7 +190,7 @@ internal static class SelfTest
         await client.ReadExactlyAsync(header, timeout.Token);
         Check(header[6] == 0, "camera pipe turns neutral on Stop");
         client.Dispose();
-        using var reopened = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+        using var reopened = new NamedPipeClientStream(".", TestPipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
         await reopened.ConnectAsync(timeout.Token);
         await reopened.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
@@ -192,10 +198,10 @@ internal static class SelfTest
         Check(header[6] == 0, "reopened consumer remains neutral without capture");
         reopened.Dispose();
         }
-        await using (var restarted = new CameraPipePublisher(host, () => (false, "none")))
+        await using (var restarted = new CameraPipePublisher(host, () => (false, "none"), TestPipeName))
         {
             restarted.Start();
-            using var afterRestart = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+            using var afterRestart = new NamedPipeClientStream(".", TestPipeName,
                 PipeDirection.InOut, PipeOptions.Asynchronous);
             await afterRestart.ConnectAsync(timeout.Token);
             await afterRestart.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
@@ -434,9 +440,9 @@ internal static class SelfTest
     private static async Task TestPublisherUiShutdownAsync()
     {
         using var host = new ReceiverHost();
-        var publisher = new CameraPipePublisher(host, () => (false, "none"));
+        var publisher = new CameraPipePublisher(host, () => (false, "none"), TestPipeName);
         publisher.Start();
-        using var client = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+        using var client = new NamedPipeClientStream(".", TestPipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
         await client.ConnectAsync(3000);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -459,10 +465,10 @@ internal static class SelfTest
     private static async Task TestAnonymousPipeRejectionAsync()
     {
         using var host = new ReceiverHost();
-        await using var publisher = new CameraPipePublisher(host, () => (false, "none"));
+        await using var publisher = new CameraPipePublisher(host, () => (false, "none"), TestPipeName);
         publisher.Start();
         // Ensure the named pipe exists before testing access; no await while impersonating.
-        using var trusted = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+        using var trusted = new NamedPipeClientStream(".", TestPipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
         await trusted.ConnectAsync(3000);
         await Task.Delay(50);
@@ -472,7 +478,7 @@ internal static class SelfTest
         var error = 0;
         try
         {
-            using var handle = OpenPipeForAccessTest(@"\\.\pipe\" + CameraPipePublisher.PipeName,
+            using var handle = OpenPipeForAccessTest(@"\\.\pipe\" + TestPipeName,
                 0xC0000000, 0, IntPtr.Zero, 3, 0, IntPtr.Zero);
             error = Marshal.GetLastWin32Error();
             denied = handle.IsInvalid && error == 5;
@@ -496,10 +502,10 @@ internal static class SelfTest
     {
         var buffersBefore = OwnedNv12Frame.ActiveBufferCount;
         using var host = new ReceiverHost();
-        var publisher = new CameraPipePublisher(host, () => (true, "slow-consumer-test"));
+        var publisher = new CameraPipePublisher(host, () => (true, "slow-consumer-test"), TestPipeName);
         publisher.Start();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-        using var slow = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+        using var slow = new NamedPipeClientStream(".", TestPipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
         await slow.ConnectAsync(timeout.Token);
         var pixels = new byte[1280 * 720 * 3 / 2];
@@ -519,7 +525,7 @@ internal static class SelfTest
                 publisher.CurrentFrameCount <= 1 && OwnedNv12Frame.ActiveBufferCount <= buffersBefore + 4,
                 "slow IPC reader keeps owned frames bounded");
         }
-        using var fast = new NamedPipeClientStream(".", CameraPipePublisher.PipeName,
+        using var fast = new NamedPipeClientStream(".", TestPipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
         await fast.ConnectAsync(timeout.Token);
         await fast.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
