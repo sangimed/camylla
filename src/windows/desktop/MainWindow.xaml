@@ -11,7 +11,10 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <StackPanel Grid.Row="0" Spacing="6">
-            <TextBlock Text="Camylla" FontSize="26" FontWeight="SemiBold" />
+            <Grid>
+                <TextBlock Text="Camylla" FontSize="26" FontWeight="SemiBold" />
+                <Button Content="Exit Camylla" Click="OnExit" HorizontalAlignment="Right" />
+            </Grid>
             <TextBlock x:Name="StateText" Text="Waiting for phone" />
             <TextBlock x:Name="RecoveryHelp" TextWrapping="Wrap" />
             <Button x:Name="RetryReceiverButton" Content="Retry PC listener" Click="OnRetryReceiver" Visibility="Collapsed" />

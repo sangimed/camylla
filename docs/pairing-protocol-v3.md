@@ -80,6 +80,8 @@ Example records (illustrative placeholders, not usable secrets):
 {"type":"video_rebind","version":3,"session_id":"<32 hex>","request_nonce":"<32 hex>"}
 {"type":"video_ticket","version":3,"session_id":"<32 hex>","request_nonce":"<32 hex>","video_ticket":"<64 hex>"}
 {"type":"stop","version":3,"session_id":"<32 hex>"}
+{"type":"stop_request","version":3,"session_id":"<32 hex>"}
+{"type":"stopped","version":3,"session_id":"<32 hex>"}
 {"type":"rotate_offer","version":3,"role":"desktop","old_id":"<64 hex>","new_id":"<64 hex>","new_cert":"<base64 DER>","rotation_id":"<32 hex>"}
 {"type":"rotate_prove","version":3,"role":"desktop","old_id":"<64 hex>","new_id":"<64 hex>","rotation_id":"<32 hex>"}
 {"type":"rotate_ready","version":3,"rotation_id":"<32 hex>"}
@@ -88,6 +90,14 @@ Example records (illustrative placeholders, not usable secrets):
 {"type":"rotation_status","version":3,"rotation_id":"<32 hex>"}
 {"type":"rotation_state","version":3,"rotation_id":"<32 hex>","state":"ready"}
 ```
+
+`stop_request` is sent only by the desktop on an authenticated active control
+session when the user selects Exit. The phone verifies `session_id`, replies
+`stopped`, then immediately ends capture and cancels retries locally. The desktop
+retires the session and neutralizes output after the acknowledgement or a
+bounded timeout. A lost acknowledgement cannot make desktop Exit wait forever;
+if the phone is unreachable, the desktop cannot prove that remote capture
+stopped. Phone Stop continues to use `stop` and does not wait for `stopped`.
 
 State transitions: desktop `unpaired -> invitation -> challenge -> paired -> active -> paired`; cancellation/expiry/interruption from invitation or challenge returns to `unpaired` with consumed/invalid invitation. `active -> paired` on Stop, control loss or heartbeat timeout. `paired/active -> revoked` on local revocation. Idle `paired -> rotation_pending -> paired(new ID)` only after proof and durable commit; timeout returns to `paired(old ID)`. `paired -> paired` on same-key certificate renewal. Android `unpaired -> pairing -> paired -> starting -> streaming/recovering -> paired` on Stop; it never transitions from paired to capture without local Start. An interrupted pairing may leave one-sided trust, detected on the next Start and repaired by fresh pairing.
 

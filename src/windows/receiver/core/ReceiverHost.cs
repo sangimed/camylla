@@ -22,6 +22,9 @@ public sealed partial class ReceiverHost : IDisposable
     private long lastReceiveTicks, lastDecodeTicks;
     private long lastPushReceiveToDecodeTicks;
     private long frameEpoch;
+    private string? connectionIssue;
+    private long connectionIssueTicks;
+    private bool phoneCaptureMayBeActive;
     private uint lastDecodedWidth, lastDecodedHeight, lastDecodedStride;
 
     private readonly LatestFrameStore frames = new();
@@ -119,7 +122,16 @@ public sealed partial class ReceiverHost : IDisposable
     public ReceiverSnapshot Snapshot()
     {
         Session? session;
-        lock (Gate) session = active;
+        string? issue;
+        bool captureMayBeActive;
+        lock (Gate)
+        {
+            session = active;
+            captureMayBeActive = phoneCaptureMayBeActive;
+            issue = session?.CurrentIssue ?? (connectionIssueTicks != 0 &&
+                System.Diagnostics.Stopwatch.GetElapsedTime(connectionIssueTicks) < TimeSpan.FromSeconds(15)
+                ? connectionIssue : null) ?? (captureMayBeActive && session == null ? "connection_lost" : null);
+        }
         return new ReceiverSnapshot(session?.State.ToString() ?? "Disconnected", session?.Peer ?? "none",
             session?.Id ?? "none", session?.Mode ?? "none", Interlocked.Read(ref received),
             Interlocked.Read(ref keyframes), Interlocked.Read(ref decoded), Interlocked.Read(ref decoderErrors),
@@ -127,13 +139,47 @@ public sealed partial class ReceiverHost : IDisposable
             Interlocked.Read(ref reconnects), lastSequence, lastPts, lastAndroidSendUs,
             lastReceiveTicks, lastDecodeTicks, Interlocked.Read(ref lastPushReceiveToDecodeTicks),
             lastDecodedWidth, lastDecodedHeight, lastDecodedStride,
-            frames.PendingDepth, frames.HighWater, frames.Superseded, Interlocked.Read(ref frameEpoch));
+            frames.PendingDepth, frames.HighWater, frames.Superseded, Interlocked.Read(ref frameEpoch), issue,
+            captureMayBeActive);
+    }
+    private void SetConnectionIssue(string? issue)
+    {
+        lock (Gate)
+        {
+            if (issue != null && active != null) return;
+            connectionIssue = issue;
+            connectionIssueTicks = issue == null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
+        }
     }
 
     private void Report(string message) => (Log ?? Console.WriteLine)(message);
     public void Stop()
     {
         try { running?.Cancel(); } catch (ObjectDisposedException) { }
+    }
+    /// <summary>Ask the phone to end its explicit capture before retiring this desktop session.</summary>
+    public async Task RequestActivePhoneStopAsync(CancellationToken ct = default)
+    {
+        Session? session;
+        lock (Gate) session = active;
+        if (session == null) return;
+        try
+        {
+            await session.SendAsync(new { type = "stop_request", version = 3, session_id = session.Id }, ct);
+            await session.DesktopStopAcknowledged.WaitAsync(ct);
+        }
+        finally
+        {
+            lock (Gate)
+            {
+                if (active == session)
+                {
+                    session.Stop();
+                    productionSession?.Video?.Dispose();
+                    ClearFrames();
+                }
+            }
+        }
     }
     public void Dispose() => Stop();
 
@@ -382,11 +428,14 @@ public sealed partial class ReceiverHost : IDisposable
                 (ct.IsCancellationRequested || session?.Token.IsCancellationRequested == true)) { }
             catch (OperationCanceledException)
             {
+                if (session?.State == ReceiverState.Streaming) session.MarkVideoIssue("video_timeout");
                 Report("Video read timeout; closing stale channel");
                 Interlocked.Increment(ref networkErrors);
             }
             catch (Exception error) when (error is IOException or AuthenticationException or InvalidDataException or InvalidOperationException or SocketException or ExternalException or JsonException or FormatException or CryptographicException)
             {
+                if (session?.State == ReceiverState.Streaming)
+                    session.MarkVideoIssue(error is ExternalException ? "decoder_failure" : "video_failure");
                 Report($"Video: {error.Message}");
                 if (error is ExternalException) Interlocked.Increment(ref decoderErrors);
                 else Interlocked.Increment(ref networkErrors);
@@ -411,7 +460,8 @@ public sealed record ReceiverSnapshot(string State, string Peer, string SessionI
     long DecoderResets, long VideoConnections, ulong LastSequence, ulong LastPtsUs,
     ulong LastAndroidSendUs, long LastReceiveTicks, long LastDecodeTicks,
     long LastReceiveToDecodeTicks, uint Width, uint Height, uint Stride,
-    int FrameQueueDepth, int FrameQueueHighWater, long SupersededPreviewFrames, long FrameEpoch = 0);
+    int FrameQueueDepth, int FrameQueueHighWater, long SupersededPreviewFrames, long FrameEpoch = 0,
+    string? ConnectionIssue = null, bool CaptureMayBeActive = false);
 
 internal enum ReceiverState { Disconnected, Connecting, Authenticating, Negotiating, Streaming, Recovering, Stopping, Error }
 
@@ -420,17 +470,25 @@ internal sealed class Session(string id, string mode, string lens, string peer, 
     private readonly SemaphoreSlim sendGate = new(1, 1);
     private readonly CancellationTokenSource stop = new();
     private bool videoBound;
+    private bool everStreamed;
+    private string? currentIssue;
     private ReceiverState state = ReceiverState.Negotiating;
+    private readonly TaskCompletionSource desktopStopAcknowledged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task DesktopStopAcknowledged => desktopStopAcknowledged.Task;
+    public void AcknowledgeDesktopStop() => desktopStopAcknowledged.TrySetResult();
     public string Id { get; } = id;
     public string Mode { get; internal set; } = mode;
     public string Lens { get; internal set; } = lens;
     public string Peer { get; } = peer;
     public ReceiverState State { get { lock (this) return state; } }
+    public bool EverStreamed { get { lock (this) return everStreamed; } }
+    public string? CurrentIssue { get { lock (this) return currentIssue; } }
+    public void MarkVideoIssue(string issue) { lock (this) currentIssue = issue; }
     public CancellationToken Token => stop.Token;
-    public bool TryBindVideo() { lock (this) { if (videoBound || stop.IsCancellationRequested) return false; videoBound = true; state = ReceiverState.Streaming; return true; } }
+    public bool TryBindVideo() { lock (this) { if (videoBound || stop.IsCancellationRequested) return false; videoBound = true; everStreamed = true; currentIssue = null; state = ReceiverState.Streaming; return true; } }
     public void UnbindVideo() { lock (this) { videoBound = false; if (!stop.IsCancellationRequested) state = ReceiverState.Recovering; } }
-    public void BeginCameraChange() { lock (this) { if (!stop.IsCancellationRequested) state = ReceiverState.Recovering; } }
-    public void Stop() { lock (this) state = ReceiverState.Stopping; stop.Cancel(); }
+    public void BeginCameraChange() { lock (this) { if (!stop.IsCancellationRequested) { currentIssue = null; state = ReceiverState.Recovering; } } }
+    public void Stop() { lock (this) state = ReceiverState.Stopping; desktopStopAcknowledged.TrySetCanceled(); stop.Cancel(); }
     public async Task SendAsync(object message, CancellationToken ct)
     {
         await sendGate.WaitAsync(ct);

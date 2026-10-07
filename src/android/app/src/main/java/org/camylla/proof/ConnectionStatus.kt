@@ -3,7 +3,18 @@ package org.camylla.proof
 /** Present the current attempt; cumulative diagnostic counters never imply an active failure. */
 internal object ConnectionStatus {
     fun message(capture: StatsSnapshot, desktop: String): String {
-        if (capture.state == "Error") return "Capture error: ${capture.error.ifBlank { "capture stopped" }}. Check the message, then try Start again."
+        if (capture.state == "Error") {
+            val detail = capture.error.ifBlank { "capture stopped" }
+            val advice = when {
+                detail.contains("permission", ignoreCase = true) -> "Grant camera permission in Android Settings, then tap Start."
+                detail.contains("camera", ignoreCase = true) || detail.contains("mode", ignoreCase = true) ->
+                    "Choose a supported camera and video mode, then tap Start."
+                detail.contains("encoder", ignoreCase = true) || detail.contains("codec", ignoreCase = true) ->
+                    "Try the 720p30 mode, then tap Start."
+                else -> "Check the message, then tap Start again."
+            }
+            return "Capture error: $detail. $advice"
+        }
         if (capture.state == "Stopped") return "Paired with $desktop. Ready to start."
         if (capture.state == "Starting" || capture.state == "Binding") return "Starting camera…"
         val network = capture.network
@@ -20,6 +31,8 @@ internal object ConnectionStatus {
     private fun guidance(error: String): String {
         val cause = error.lowercase()
         return when {
+            cause.contains("session_busy") ->
+                "Another phone session is active on the PC. Stop it before retrying."
             cause.contains("revoked") || cause.contains("untrusted") || cause.contains("certificate") ||
                 cause.contains("identity_mismatch") || cause.contains("pair_rejected") ->
                 "Trust was rejected; check the paired PC or stop and pair again."

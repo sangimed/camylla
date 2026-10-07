@@ -83,7 +83,8 @@ class CaptureService : LifecycleService() {
                             if (remoteSessionId != id) { remoteSessionId = id; lastRemoteId = 0 }
                             publishNetwork(true)
                         } } },
-                        { message, reply -> main.post { remote(message, reply) } })
+                        { message, reply -> main.post { remote(message, reply) } },
+                        { main.post { if (sessionStartMs != 0L) { endSession(); stopSelf() } } })
                     settings.preferredPeer = peer.id
                     bindCamera(settings.values(entry!!.id, mode.name))
                 } catch (error: Exception) { endSession(); fail(error.message ?: "Capture setup failed"); stopSelf() }

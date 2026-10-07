@@ -143,6 +143,8 @@ public sealed partial class ReceiverHost
                     if (!Trust.IsTrusted(phoneId)) throw new AuthenticationException("untrusted_peer");
                     security = new(session, phoneId, clientNonce); ticket = security.NewTicket();
                     active = session; productionSession = security;
+                    phoneCaptureMayBeActive = true;
+                    connectionIssue = null; connectionIssueTicks = 0;
                 }
                 await session.SendAsync(new { type = "started", version = 3, session_id = session.Id,
                     client_nonce = clientNonce, server_nonce = security.ServerNonce, video_ticket = ticket,
@@ -159,8 +161,19 @@ public sealed partial class ReceiverHost
                     {
                         V3Record.Require(message.RootElement, "stop", "session_id");
                         if (V3Record.Hex(message.RootElement, "session_id", 16) != session.Id) throw new AuthenticationException("stale_session");
+                        lock (Gate) phoneCaptureMayBeActive = false;
                         await session.StopAndSendAsync(new { type = "stopped", version = 3, session_id = session.Id }, ct);
                         security.Video?.Dispose(); ClearFrames();
+                        break;
+                    }
+                    if (kind == "stopped")
+                    {
+                        V3Record.Require(message.RootElement, "stopped", "session_id");
+                        if (V3Record.Hex(message.RootElement, "session_id", 16) != session.Id)
+                            throw new AuthenticationException("stale_session");
+                        session.AcknowledgeDesktopStop();
+                        lock (Gate) phoneCaptureMayBeActive = false;
+                        session.Stop(); security.Video?.Dispose(); ClearFrames();
                         break;
                     }
                     if (kind == "camera_changing")
@@ -217,6 +230,8 @@ public sealed partial class ReceiverHost
             catch (Exception error) when (error is IOException or AuthenticationException or JsonException or
                 InvalidDataException or SocketException or CryptographicException or InvalidOperationException or TimeoutException or FormatException)
             {
+                if (session == null) SetConnectionIssue(error is AuthenticationException ? "trust_rejected" :
+                    error.Message is "session_busy" ? "session_busy" : "connection_rejected");
                 Report($"v3 control rejected or disconnected exception={error.GetType().Name} hresult=0x{error.HResult:X8}");
                 for (var cause = error.InnerException; cause != null; cause = cause.InnerException)
                     Report($"v3 transport cause={cause.GetType().Name} hresult=0x{cause.HResult:X8}" +
@@ -231,9 +246,14 @@ public sealed partial class ReceiverHost
                 Trust!.DetachRotationControl(connection);
                 if (session != null)
                 {
+                    var unexpectedLoss = session.State != ReceiverState.Stopping && session.EverStreamed;
                     ClearCameraSession(session);
                     session.Stop();
-                    lock (Gate) if (active == session) { productionSession?.Video?.Dispose(); active = null; productionSession = null; ClearFrames(); }
+                    lock (Gate) if (active == session)
+                    {
+                        productionSession?.Video?.Dispose(); active = null; productionSession = null; ClearFrames();
+                        if (unexpectedLoss) { connectionIssue = "connection_lost"; connectionIssueTicks = System.Diagnostics.Stopwatch.GetTimestamp(); }
+                    }
                 }
                 productionConnections.Release();
             }

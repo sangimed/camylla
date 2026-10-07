@@ -84,6 +84,23 @@ internal static partial class ProductionSelfTest
             Check(!restarted.PairingOpen && restarted.Candidate == null, "invitations/challenges never survive restart");
         }
         var controlPort = FreePort(); var videoPort = FreePort();
+        using (var retryHost = new ReceiverHost(controlPort, videoPort, trust))
+        {
+            var blocker = new TcpListener(IPAddress.Any, controlPort);
+            blocker.Start();
+            try
+            {
+                try { await retryHost.RunAsync(CancellationToken.None); throw new Exception("Blocked listener unexpectedly started"); }
+                catch (SocketException) { }
+            }
+            finally { blocker.Stop(); }
+            using var retryLifetime = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var retryRun = retryHost.RunAsync(retryLifetime.Token);
+            await Task.Delay(100, retryLifetime.Token);
+            Check(!retryRun.IsFaulted && !retryRun.IsCompleted, "Listener restarts after blocked port is released");
+            retryLifetime.Cancel();
+            await retryRun;
+        }
         using var host = new ReceiverHost(controlPort, videoPort, trust);
         using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var run = host.RunAsync(lifetime.Token);
@@ -150,13 +167,34 @@ internal static partial class ProductionSelfTest
             }
             await Task.Delay(100, lifetime.Token);
             Check(host.Snapshot().State == "Disconnected" && host.Frames.PendingDepth == 0, "Stop neutral state");
+            using (var control = await Connect(controlPort, trust.DesktopId, phone, lifetime.Token))
+            {
+                await Wire.WriteControlAsync(control, new { type = "start", version = 3, phone_id = phoneId,
+                    client_nonce = ProductionTrust.RandomHex(16), codec = "h264", modes = new[] { "1280x720@30" },
+                    mode = "1280x720@30", lens = "rear" }, lifetime.Token);
+                using var started = await Wire.ReadControlAsync(control, lifetime.Token);
+                var sessionId = Wire.RequiredString(started.RootElement, "session_id");
+                var desktopStop = host.RequestActivePhoneStopAsync(lifetime.Token);
+                using var request = await Wire.ReadControlAsync(control, lifetime.Token);
+                Check(Wire.RequiredString(request.RootElement, "type") == "stop_request" &&
+                    Wire.RequiredString(request.RootElement, "session_id") == sessionId,
+                    "Desktop Exit requests Stop on authenticated session");
+                await Wire.WriteControlAsync(control, new { type = "stopped", version = 3, session_id = sessionId }, lifetime.Token);
+                await desktopStop;
+            }
+            await Task.Delay(100, lifetime.Token);
+            Check(host.Snapshot().State == "Disconnected" && host.Frames.PendingDepth == 0,
+                "Desktop Exit acknowledgement retires session and neutralizes output");
             trust.Revoke(phoneId);
             Check(!trust.IsTrusted(phoneId), "revocation persists");
             using (var restored = new ProductionTrust(directory)) Check(!restored.IsTrusted(phoneId), "revocation survives reload");
             await ExpectTlsRejected(controlPort, trust.DesktopId, phone, lifetime.Token);
             await ExpectTlsRejected(controlPort, trust.DesktopId, other, lifetime.Token);
             await ExpectTlsRejected(controlPort, new string('0', 64), phone, lifetime.Token);
-            Console.WriteLine("v3 pairing: one-use invitation, mutual TLS control/video, protected repeat trust, stale/duplicate binds, Stop, revocation and wrong identities passed");
+            for (var attempt = 0; attempt < 10 && host.Snapshot().ConnectionIssue != "trust_rejected"; attempt++)
+                await Task.Delay(20, lifetime.Token);
+            Check(host.Snapshot().ConnectionIssue == "trust_rejected", "Rejected trust is a current connection issue");
+            Console.WriteLine("v3 pairing: one-use invitation, mutual TLS control/video, protected repeat trust, stale/duplicate binds, phone/Desktop Stop, revocation and wrong identities passed");
         }
         finally { lifetime.Cancel(); host.Stop(); await run; }
     }

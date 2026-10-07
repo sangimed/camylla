@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Debug.WriteLine(error); }
         timer.Tick += OnTick;
         Closed += OnClosed;
+        InitializeTray();
         receiver.Log += message =>
         {
             if (!message.StartsWith("Development session secret:", StringComparison.Ordinal))
@@ -135,7 +136,7 @@ public sealed partial class MainWindow : Window
             if (fresh && receiverTask is { IsCompletedSuccessfully: false, IsFaulted: false }) lastError = null;
             var status = ConnectionPresentation.Describe(snapshot.State, fresh,
                 receiver.Trust!.Phones.Any(p => !p.Revoked), receiverTask?.IsFaulted == true, lastError,
-                snapshot.Width, snapshot.Height);
+                snapshot.Width, snapshot.Height, snapshot.ConnectionIssue);
             StateText.Text = status.Title;
             RecoveryHelp.Text = status.Help;
             RetryReceiverButton.Visibility = receiverTask?.IsFaulted == true ? Visibility.Visible : Visibility.Collapsed;
@@ -163,6 +164,7 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         closing = true;
+        DisposeTray();
         timer.Stop();
         stop.Cancel();
         receiver.Stop();

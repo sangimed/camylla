@@ -103,6 +103,10 @@ class RecoveryStateTest {
         val lost = recovered.copy(network = recovered.network.copy(state = "Recovering", error = "Connection refused"))
         assertTrue(ConnectionStatus.message(lost, "PC").contains("firewall"))
         assertTrue(ConnectionStatus.message(lost, "PC").contains("Retry now"))
+        val busy = lost.copy(network = lost.network.copy(error = "session_busy"))
+        assertTrue(ConnectionStatus.message(busy, "PC").contains("Another phone session"))
+        val denied = StatsSnapshot(state = "Error", error = "Camera permission required")
+        assertTrue(ConnectionStatus.message(denied, "PC").contains("Android Settings"))
     }
 
     @Test fun resetDropsStalePayloadsAndRequiresFreshConfigAndKey() {
