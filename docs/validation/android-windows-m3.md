@@ -121,7 +121,7 @@ asserted.
 
 Healthy LAN throughput sustained the 30 FPS baseline and the recorded samples
 showed bounded queues without a growing video backlog. The eventual
-camera-to-consumer p95 latency, five-second recovery target, 60-minute run,
+camera-to-OBS p95 latency, five-second recovery target,
 and broader impaired-network profiles require a defined physical measurement
 setup and later product integration.
 

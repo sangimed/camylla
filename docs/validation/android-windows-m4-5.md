@@ -123,7 +123,7 @@ exclude transitions and intervals with changing network-error counters:
 | 1280x720 | 64 | 28.56–30.35 | 15.65–22.31 |
 | 1920x1080 | 28 | 29.28–30.40 | 8.70–10.23 |
 
-These are short local observations, not an endurance/latency certification.
+These local observations do not establish camera-to-OBS latency.
 Decode errors remained zero. The desktop preview does not present 30 FPS.
 Deliberate video-channel reconfiguration increments the diagnostic network-error
 counter for EOF; the original run reached four. Control stayed authenticated
@@ -213,5 +213,5 @@ confirmation of the tablet images and physical lamp is still requested.
    capture authorization or active light/locks. Obtain the user's visual
    confirmation of framing, controls and clean webcam output.
 
-Reboot/unattended capture remains separate issue #34. Thermal/endurance and
+Reboot/unattended capture remains separate issue #34. Thermal behavior and
 clean-machine deployment evidence remain their own existing project gates.

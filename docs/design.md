@@ -30,7 +30,7 @@ Reference implementations have been inspected at pinned commits; see [source ins
 - Windows 11 x64 desktop and Android 10+ application (provisional Android support baseline). Windows ARM64 is deferred until native pipeline testing is available.
 - One phone, one consuming application as the initial supported case.
 - Standalone Windows webcam; an OBS-only source is insufficient.
-- Launch compatibility targets: Teams, Zoom, and OBS, one consumer at a time. Record exact versions and tested modes with each release.
+- Launch compatibility target: OBS. Record its exact version and tested modes with each release.
 - Wi-Fi connection, live preview, camera selection, basic image controls, persistent settings, and reliable reconnection.
 - Standalone desktop app with its own setup, preview, controls, and settings; no OBS installation or shell. Exact workflows remain open.
 - Front/rear selection, orientation, zoom, continuous autofocus, and explicit output mirroring; preview mirroring is a separate setting.
@@ -58,7 +58,7 @@ flowchart LR
     E --> F[WinUI preview]
     E --> G[Bounded access-controlled frame IPC]
     G --> H[Native MF source in Windows camera infrastructure]
-    H --> I[Teams, Zoom or OBS]
+    H --> I[OBS]
     J[WinUI session controls] <--> K[Authenticated TLS control connection]
     K <--> B
 ```
@@ -111,7 +111,7 @@ The implemented [v2 wire specification](protocol-v2.md) defines bounded message 
 
 H.264-only v1 accepted, with MediaCodec hardware encoding where available. HEVC/AV1 and bundled FFmpeg require a concrete demonstrated need before reconsideration. Validate 720p30/1080p30 on the supported matrix. Optionally evaluate 720p60/1080p60 on the S21 Ultra; expose sustainable modes and automatically fall back to 30 FPS when needed. Lack of 60-FPS support does not block release. Prefer proven surface/hardware paths over CPU pixel conversion or a new software encoder; any fallback must pass the same baseline tests.
 
-Accepted targets: camera-to-consuming-application latency <=200 ms at p95 on a defined healthy LAN and sustained 60-minute baseline sessions. Camera capture, encoder, transport, decoder, and consuming application must support the negotiated mode; recording specifications alone are insufficient evidence. The consuming application selects its capture format; advertising 60 FPS does not force it to consume 60 FPS. No artificial caps does not mean promising unsupported hardware modes.
+Accepted targets: camera-to-OBS latency <=200 ms at p95 on a defined healthy LAN and stable streaming verified through focused functional and recovery checks, without a minimum test duration. Camera capture, encoder, transport, decoder, and consuming application must support the negotiated mode; recording specifications alone are insufficient evidence. The consuming application selects its capture format; advertising 60 FPS does not force it to consume 60 FPS. No artificial caps does not mean promising unsupported hardware modes.
 
 Accepted adaptation policy: selected quality is a target. The current M4.7 implementation reduces encoder bitrate to 75% of the selected profile during network recovery or severe thermal pressure, then restores it after pressure clears. It reports selected/effective values, delivered FPS and one current reason. It keeps resolution, FPS target and the consumer's negotiated output format stable for that bitrate-only adaptation. Mode changes use a new generation and fresh keyframe. Measurements may justify a later deliberate resolution/FPS adaptation for sustained performance or thermal pressure. Thermal safety overrides quality preference. Engineering recommendation: preview/virtual output share decoded frames where feasible rather than independently decoding the stream. Exact thresholds and copy/GPU strategy remain proof-dependent.
 
@@ -125,7 +125,7 @@ AudioRecord capture is only one part of that feature. A Windows camera API does 
 
 ## 12. Windows virtual camera strategy
 
-Accepted proposed architecture: Windows 11 Media Foundation software camera, conditional on Teams/Zoom/OBS validation. DirectShow and kernel-driver paths deferred unless a demonstrated requirement defeats this approach. [MFCreateVirtualCamera](https://learn.microsoft.com/en-us/windows/win32/api/mfvirtualcamera/nf-mfvirtualcamera-mfcreatevirtualcamera) requires build 22000+, supports current-user/all-user access scopes, and requires admin for all-user access. [Microsoft sample](https://github.com/microsoft/Windows-Camera/blob/master/Samples/VirtualCamera/README.md) demonstrates a custom media source and installer. Camera registration scope and media-source COM deployment are separate privilege questions: current-user camera scope alone does not prove a no-admin installer.
+Accepted proposed architecture: Windows 11 Media Foundation software camera, conditional on OBS validation. DirectShow and kernel-driver paths deferred unless a demonstrated requirement defeats this approach. [MFCreateVirtualCamera](https://learn.microsoft.com/en-us/windows/win32/api/mfvirtualcamera/nf-mfvirtualcamera-mfcreatevirtualcamera) requires build 22000+, supports current-user/all-user access scopes, and requires admin for all-user access. [Microsoft sample](https://github.com/microsoft/Windows-Camera/blob/master/Samples/VirtualCamera/README.md) demonstrates a custom media source and installer. Camera registration scope and media-source COM deployment are separate privilege questions: current-user camera scope alone does not prove a no-admin installer.
 
 The source advertises explicit sizes, pixel formats and frame rates; test NV12 and a suitable legacy-consumer fallback such as YUY2 rather than assuming one subtype covers all applications. Prefer the smallest passing format set. Accepted UX target: a persistent camera registration for the current Windows user remains selectable when the desktop receiver is closed/unavailable and produces neutral offline output. Opening the camera never remotely starts phone capture. Verify the API lifetime, activation and deployment behavior in the Windows proof; native source installation may still require elevation. During receiver loss the source must deliver neutral offline output safely, without stale images, unbounded waiting or network processing. Separate application signing from kernel-driver signing: v1 does not deliberately introduce a kernel camera driver.
 
@@ -169,7 +169,7 @@ Target trusted signing for official Windows v1 releases; unsigned development bu
 
 ## 17. Testing strategy
 
-Launch gates cover Teams/Zoom/OBS on recorded versions, one consumer at a time; supported 30-FPS modes; <=200-ms p95 camera-to-local-consuming-application latency on a documented healthy LAN; and 60-minute baseline operation. 60 FPS is optional and its absence is not a release failure. Remote meeting-server/transmission latency is outside this local pipeline target.
+Launch gates cover OBS on recorded versions; supported 30-FPS modes; <=200-ms p95 camera-to-OBS latency on a documented healthy LAN; and streaming, bounded resources and recovery verified through focused functional checks. No minimum test duration applies. 60 FPS is optional and its absence is not a release failure. Remote meeting-server/transmission latency is outside this local pipeline target.
 
 Test hardware: S21 Ultra first, then a second phone and a Windows x64 integrated-GPU configuration before broad support claims. Exact devices/Windows CPU/GPU and Android version remain unknown. Emulator results do not establish physical camera/codec behavior.
 
@@ -223,11 +223,11 @@ Sequence accepted; dates deliberately unset. M0, Windows M1, physical S21 Ultra 
 | Milestone | Work | Exit evidence |
 | --- | --- | --- |
 | M0: design baseline | Review scope, glossary, ADRs, protocol/pairing outlines and available test resources | Shared understanding; explicit unknowns and proof responsibilities |
-| M1: Windows feasibility | Synthetic MF source, target consumers, install/uninstall and native preview/WinUI deployment | Teams/Zoom/OBS can consume core modes; workable deployment/IPC seam; documented source lifetime behavior |
+| M1: Windows feasibility | Synthetic MF source, target consumers, install/uninstall and native preview/WinUI deployment | OBS can consume core modes; workable deployment/IPC seam; documented source lifetime behavior |
 | M2: Android feasibility | CameraX/MediaCodec H.264, basic controls and explicit service lifecycle on S21 Ultra | Rear 720p30 produced about 29.9 encoded FPS and fully decodable H.264; lifecycle paths manually exercised; detailed other-mode and thermal/battery measurements remain later validation |
 | M3: secure end-to-end transport | Versioned protocol and production trust direction; TLS/TCP physical proof | Authenticated 720p30 decode, bounded queues, receiver restart and Wi-Fi recovery; TLS/TCP accepted for continued development; exact latency/recovery timing remains a later measured gate |
 | M4: product alpha | Focused setup, preview/controls/settings, errors, recovery and degradation UX | Complete first-use/repeat-use flows; no silent stale output or unsupported-control failures |
-| M5: wider alpha/beta | Second phone/integrated-GPU matrix; parser/security, runtime/license and packaging reviews | Recorded compatibility/60-minute results; ordinary offline install/upgrade/uninstall; release signing path established |
+| M5: wider alpha/beta | Second phone/integrated-GPU matrix; parser/security, runtime/license and packaging reviews | Recorded OBS compatibility and functional streaming/recovery results; ordinary offline install/upgrade/uninstall; release signing path established |
 | M6: v1.0 | Protected release, signed distribution, notices/checksums, documented support/limitations | All core 30-FPS release gates pass; reproducible procedure/provenance, known limitations and rollback/reinstall instructions |
 
 Stop and revisit the relevant ADR when a proof fails; do not compensate for missing core reliability by accumulating features. USB/audio may receive later, separate design sessions after baseline reliability.

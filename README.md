@@ -22,7 +22,7 @@ The goal is a free, fully open-source webcam without accounts, ads, telemetry, w
 | Phone | Android 10+ as a provisional baseline |
 | Connection | Local Wi-Fi with authenticated, encrypted transport |
 | Usage | One phone and one consuming application at a time |
-| Target applications | Teams, Zoom, and OBS; compatibility must be tested |
+| Target application | OBS; compatibility must be tested |
 | Frame rate | Reliable 30 FPS; optional 60 FPS when supported and sustainable |
 
 Audio, USB connections, Windows 10, Windows ARM64, recording, and multiple-phone composition are deferred. Camylla is intended to work as a standalone Windows webcam without requiring an OBS installation.

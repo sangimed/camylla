@@ -195,7 +195,7 @@ In OBS:
 5. test 1920×1080 at 30 FPS if the consumer exposes the mode;
 6. close the consumer and open the camera again.
 
-The full M1 test matrix also includes Teams and Zoom. Record results in [the M1 Windows validation worksheet](validation/windows-virtual-camera-m1.md).
+Use OBS for the M1 consumer checks. Record results in [the M1 Windows validation worksheet](validation/windows-virtual-camera-m1.md).
 
 Do not report a consumer as supported solely because the camera appears in its device list.
 
@@ -347,7 +347,7 @@ Manual registry cleanup should be a last-resort diagnostic step, not the documen
 | System lifetime persists across sessions/reboots; identical parameters reopen a camera; `Remove` invalidates active consumers | Microsoft API documentation | Not tested on Windows yet |
 | Frame-server processes host the custom source during creation/use | Microsoft VirtualCamera sample documentation | Not tested on Windows yet |
 | Media-source COM registration must be machine-wide for Frame Server activation | Microsoft sample deployment model plus Windows runtime evidence | Current HKCU-only POC path failed during `IMFVirtualCamera::Start`; machine-wide path pending validation |
-| Teams, Zoom, OBS compatibility; exact negotiated formats; repeat-open behavior | Required manual consumer testing | Not tested |
+| OBS compatibility; exact negotiated formats; repeat-open behavior | Required manual consumer testing | Not tested |
 
 The implementation deliberately separates **COM deployment scope** from **virtual-camera access scope**. The machine-wide COM registration follows the Microsoft sample deployment model; current-user versus all-users remains an `MFVirtualCameraAccess` decision. Reboot behavior and final installer policy still require recorded Windows evidence.
 
@@ -366,7 +366,7 @@ It requires recording:
 - repeated open/close/reopen results;
 - reboot/system-lifetime behavior;
 - current-user and, later, all-user removal behavior;
-- exact Teams, Zoom, and OBS versions and results.
+- exact OBS version and results.
 
 Preserve failures and HRESULTs. Do not replace `Not tested` entries with assumptions.
 

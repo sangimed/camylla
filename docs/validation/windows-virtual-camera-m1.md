@@ -49,14 +49,12 @@ The final cleanup failure was `IMFVirtualCamera::Remove()` returning `0xC00D36B2
 
 ## Consumer matrix
 
-Exact application versions were not captured during this feasibility run. Do not turn these results into broad compatibility claims until versioned release testing is performed.
+OBS is the required release consumer; the Discord result below is additional historical evidence. Exact application versions were not captured during this feasibility run. Do not turn these results into broad compatibility claims until versioned release testing is performed.
 
 | Consumer | Version | Result | Notes |
 | --- | --- | --- | --- |
 | OBS Studio | Not recorded | Pass | Virtual camera opened successfully; synthetic output and baseline 720p30/1080p30 modes were exercised. |
 | Discord | Not recorded | Pass | Virtual camera opened successfully and displayed the animated `CAMYLLAPOC` pattern. |
-| Microsoft Teams | Not tested | Not tested | Explicitly untested in this M1 run; retain for later compatibility matrix. |
-| Zoom | Not tested | Not tested | Explicitly untested in this M1 run; retain for later compatibility matrix. |
 
 ## Deployment findings
 

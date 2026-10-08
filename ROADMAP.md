@@ -97,7 +97,7 @@ Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues
 
 - [ ] Add a second Android phone to the compatibility matrix.
 - [ ] Add a Windows integrated-GPU test configuration.
-- [ ] Complete 60-minute stability runs. The 2026-10-08 720p30 baseline sampled 59m56s at 29.09 received/decoded FPS, with zero decoder errors but five reconnect episodes; OBS 32.2.2 sampling stopped at 45m15s. A clean baseline and full one-hour consumer run remain; see [release gate results](docs/validation/v1-release-gates.md).
+- [ ] Diagnose observed reconnects and validate streaming, bounded resources, OBS output and recovery with focused functional checks. The 2026-10-08 observations recorded zero decoder errors but five reconnect episodes; see [release gate results](docs/validation/v1-release-gates.md). OBS is the required release consumer; no minimum test duration applies.
 - [ ] Expand parser/security/state-machine testing and fuzzing where appropriate.
 - [ ] Audit bundled dependencies, runtimes, licenses, and notices.
 - [ ] Validate ordinary offline install, upgrade, uninstall, and cleanup.

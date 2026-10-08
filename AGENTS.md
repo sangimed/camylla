@@ -5,3 +5,7 @@ When work completes and its pull request is tested and merged into `main`, updat
 work. Keep detailed implementation and validation evidence in the associated
 GitHub issue and validation record. Do not mark a roadmap item complete for work
 that has not been merged into `main` or remains unverified.
+
+Release consumer validation targets OBS only. There is no fixed-duration
+endurance requirement. Use focused functional and recovery checks; do not keep
+an interactive agent session waiting for an elapsed-time test.

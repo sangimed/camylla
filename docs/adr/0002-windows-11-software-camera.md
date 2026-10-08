@@ -4,7 +4,7 @@ status: accepted
 
 # Target the Windows 11 software virtual-camera path
 
-Camylla targets Windows 11 and proposes Media Foundation's software virtual-camera API, conditional on proving frame delivery and format negotiation in Teams, Zoom, and OBS. Windows 10 support, DirectShow output, and kernel-camera-driver paths are deferred: broader compatibility would add integration and distribution obligations without a confirmed v1 requirement. This decision selects a proof target, not a claim that compatibility is already demonstrated.
+Camylla targets Windows 11 and proposes Media Foundation's software virtual-camera API, conditional on proving frame delivery and format negotiation in OBS. Windows 10 support, DirectShow output, and kernel-camera-driver paths are deferred: broader compatibility would add integration and distribution obligations without a confirmed v1 requirement. This decision selects a proof target, not a claim that compatibility is already demonstrated.
 
 ## Considered options
 
