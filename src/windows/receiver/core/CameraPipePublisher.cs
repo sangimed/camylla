@@ -25,6 +25,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     private ulong sequence;
     private Task? run;
     private long published, neutral, failures;
+    private long clientDisconnects;
     private bool firstInstance = true;
     private string? lastError;
     private readonly string pipeName;
@@ -32,6 +33,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     public long Published => Interlocked.Read(ref published);
     public long Neutral => Interlocked.Read(ref neutral);
     public long Failures => Interlocked.Read(ref failures);
+    public long ClientDisconnects => Interlocked.Read(ref clientDisconnects);
     public int FrameQueueDepth => reader.Store.PendingDepth;
     public int FrameQueueHighWater => reader.Store.HighWater;
     public int CurrentFrameCount { get { lock (gate) return current == null ? 0 : 1; } }
@@ -83,8 +85,7 @@ public sealed class CameraPipePublisher : IAsyncDisposable
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or
                     IdentityNotMappedException)
                 {
-                    Volatile.Write(ref lastError, error.Message);
-                    Interlocked.Increment(ref failures);
+                    RecordFailure("accept", error);
                     try { await Task.Delay(100, stop.Token).ConfigureAwait(false); }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
                 }
@@ -138,14 +139,24 @@ public sealed class CameraPipePublisher : IAsyncDisposable
     {
         using (pipe)
         {
+            var stage = "request";
             try
             {
                 var request = new byte[4];
                 var header = new byte[HeaderBytes];
                 while (!stop.IsCancellationRequested)
                 {
-                    await pipe.ReadExactlyAsync(request, stop.Token);
-                    if (!request.AsSpan().SequenceEqual("CMY1"u8)) break;
+                    stage = "request";
+                    var count = await pipe.ReadAsync(request, stop.Token);
+                    if (count == 0)
+                    {
+                        // Consumer close between requests is normal, including OBS reopen.
+                        Interlocked.Increment(ref clientDisconnects);
+                        break;
+                    }
+                    await pipe.ReadExactlyAsync(request.AsMemory(count), stop.Token);
+                    if (!request.AsSpan().SequenceEqual("CMY1"u8))
+                        throw new InvalidDataException("Invalid camera pipe request");
                     OwnedNv12Frame? frame;
                     byte[] streamGeneration;
                     ulong frameSequence;
@@ -167,9 +178,11 @@ public sealed class CameraPipePublisher : IAsyncDisposable
                             frame.Pixels.Length <= 4096 * 1080 * 3 / 2 &&
                             Stopwatch.GetElapsedTime(frame.DecodedAtTicks) < TimeSpan.FromMilliseconds(500);
                         WriteHeader(header, live ? frame : null, streamGeneration, frameSequence);
+                        stage = "header";
                         await pipe.WriteAsync(header, stop.Token);
                         if (live)
                         {
+                            stage = "frame";
                             await pipe.WriteAsync(frame!.PixelsMemory, stop.Token);
                             Interlocked.Increment(ref published);
                         }
@@ -177,11 +190,19 @@ public sealed class CameraPipePublisher : IAsyncDisposable
                     }
                 }
             }
-            catch (Exception error) when (error is IOException or OperationCanceledException or ObjectDisposedException)
+            catch (Exception error) when (error is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException)
             {
-                if (!stop.IsCancellationRequested) Interlocked.Increment(ref failures);
+                if (!stop.IsCancellationRequested) RecordFailure(stage, error);
             }
         }
+    }
+
+    private void RecordFailure(string stage, Exception error)
+    {
+        var detail = $"Camera IPC failure stage={stage} exception={error.GetType().Name} hresult=0x{error.HResult:X8}";
+        Volatile.Write(ref lastError, detail);
+        Interlocked.Increment(ref failures);
+        receiver.Report(detail);
     }
 
     private static void WriteHeader(Span<byte> header, OwnedNv12Frame? frame, byte[] generation, ulong sequence)

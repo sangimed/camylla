@@ -91,6 +91,7 @@ try {
         Console.WriteLine($"state={s.State} peer={s.Peer} session={s.SessionId} mode={s.Mode} " +
             $"receivedAU={s.ReceivedAccessUnits} keyframes={s.Keyframes} decoded={s.DecodedFrames} decoderErrors={s.DecoderErrors} " +
             $"networkErrors={s.NetworkErrors} decoderResets={s.DecoderResets} videoConnections={s.VideoConnections} " +
+            $"controlDisconnects={s.ControlDisconnects} " +
             $"lastSeq={s.LastSequence} lastPtsUs={s.LastPtsUs} androidSendUs={s.LastAndroidSendUs} " +
             $"receiveTicks={s.LastReceiveTicks} decodedFrameTicks={s.LastDecodeTicks} " +
             $"lastPushReceiveToDecodeMs={Stopwatch.GetElapsedTime(0, s.LastReceiveToDecodeTicks).TotalMilliseconds:F2} " +

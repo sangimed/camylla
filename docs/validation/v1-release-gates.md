@@ -66,8 +66,11 @@ CI and earlier short physical checks do not substitute for these gates.
 ## Status and limits
 
 - **Streaming/recovery:** recorded queues and memory remained bounded, with
-  zero decoder errors. Five reconnect episodes and 19 IPC errors still require
-  diagnosis and focused verification of the affected scenarios.
+  zero decoder errors. Five reconnect episodes appeared in the sampled states;
+  the event log records 31 control EOFs and 11 video I/O failures within the
+  baseline interval. The 19 IPC errors have no recorded stage or cause. See
+  [the recovery diagnostic review](recovery-diagnostics-2026-10-08.md) for the
+  corrected event counts, diagnostic fixes and remaining physical checks.
 - **Throughput:** the baseline averaged 29.09 received/decoded FPS at 720p.
   During the OBS run, the registered virtual camera was requested at
   1080p30 while the phone supplied 720p30. The IPC live-response counter

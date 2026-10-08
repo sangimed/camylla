@@ -93,6 +93,7 @@ internal static class SelfTest
         TestOwnedLatestFrames();
         TestNv12Conversion();
         await TestCameraPipeAsync();
+        await TestPipeDiagnosticsAsync();
         await TestPublisherUiShutdownAsync();
         await TestAnonymousPipeRejectionAsync();
         await TestSlowPipeConsumerAsync();
@@ -208,6 +209,66 @@ internal static class SelfTest
             await afterRestart.ReadExactlyAsync(header, timeout.Token);
             Check(header[6] == 0, "publisher restart returns neutral and accepts new consumer");
         }
+    }
+
+    private static async Task TestPipeDiagnosticsAsync()
+    {
+        using var host = new ReceiverHost();
+        var events = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        host.Log += events.Enqueue;
+        await using var publisher = new CameraPipePublisher(host, () => (true, "ipc-diagnostics"), TestPipeName);
+        publisher.Start();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        async Task WaitFor(Func<bool> condition)
+        {
+            for (var attempt = 0; attempt < 200; attempt++)
+            {
+                if (condition()) return;
+                await Task.Delay(10, timeout.Token);
+            }
+            throw new Exception("IPC diagnostic did not arrive");
+        }
+        using (var normal = new NamedPipeClientStream(".", TestPipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
+        {
+            await normal.ConnectAsync(timeout.Token);
+            await normal.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+            await normal.ReadExactlyAsync(new byte[CameraPipePublisher.HeaderBytes], timeout.Token);
+        }
+        await WaitFor(() => publisher.ClientDisconnects == 1);
+        Check(publisher.Failures == 0 && publisher.LastError == null, "normal consumer close is not an IPC failure");
+        using (var partial = new NamedPipeClientStream(".", TestPipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
+        {
+            await partial.ConnectAsync(timeout.Token);
+            await partial.WriteAsync("C"u8.ToArray(), timeout.Token);
+        }
+        await WaitFor(() => publisher.Failures == 1);
+        Check(publisher.ClientDisconnects == 1 &&
+            events.Any(e => e.Contains("stage=request exception=EndOfStreamException")),
+            "truncated request reports its stage and exception, not normal close");
+        using (var aborted = new NamedPipeClientStream(".", TestPipeName, PipeDirection.InOut, PipeOptions.Asynchronous))
+        {
+            await aborted.ConnectAsync(timeout.Token);
+            using (var frame = OwnedNv12Frame.CopyFromManaged(new byte[1280 * 720 * 3 / 2],
+                1280, 720, 1280, 0, Stopwatch.GetTimestamp())) host.PublishFrame(frame);
+            await WaitFor(() => publisher.CurrentFrameCount == 1);
+            await aborted.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+            var header = new byte[CameraPipePublisher.HeaderBytes];
+            await aborted.ReadExactlyAsync(header, timeout.Token);
+            Check(header[6] == 1, "aborted consumer received live header");
+            // Close with an undrained 720p body; the server must report the frame write.
+        }
+        await WaitFor(() => publisher.Failures == 2);
+        Check(events.Any(e => e.Contains("stage=frame exception=IOException")) &&
+            publisher.LastError?.Contains("stage=frame") == true, "aborted frame write is diagnosable");
+        using var reopened = new NamedPipeClientStream(".", TestPipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await reopened.ConnectAsync(timeout.Token);
+        await reopened.WriteAsync("CMY1"u8.ToArray(), timeout.Token);
+        var restoredHeader = new byte[CameraPipePublisher.HeaderBytes];
+        await reopened.ReadExactlyAsync(restoredHeader, timeout.Token);
+        if (restoredHeader[6] == 1)
+            await reopened.ReadExactlyAsync(new byte[1280 * 720 * 3 / 2], timeout.Token);
+        Check(publisher.Failures == 2, "consumer reopens after aborted frame write");
+        Console.WriteLine("Camera IPC diagnostics: normal close, truncated request, aborted frame write and reopen passed");
     }
 
     private static void TestNv12Conversion()

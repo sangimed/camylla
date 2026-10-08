@@ -85,8 +85,10 @@ public sealed partial class ReceiverHost
         {
             if (!productionConnections.Wait(0)) return;
             Session? session = null;
+            var sessionAccepted = false;
             string? phoneId = null;
             var connection = Guid.NewGuid();
+            var disconnectReason = "channel_closed";
             try
             {
                 using var currentCertificate = Trust!.CopyControlCertificate();
@@ -143,6 +145,7 @@ public sealed partial class ReceiverHost
                     if (!Trust.IsTrusted(phoneId)) throw new AuthenticationException("untrusted_peer");
                     security = new(session, phoneId, clientNonce); ticket = security.NewTicket();
                     active = session; productionSession = security;
+                    sessionAccepted = true;
                     phoneCaptureMayBeActive = true;
                     connectionIssue = null; connectionIssueTicks = 0;
                 }
@@ -226,10 +229,15 @@ public sealed partial class ReceiverHost
                     await session.SendAsync(new { type = "pong", version = 3 }, lifetime.Token);
                 }
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException)
+            {
+                disconnectReason = "idle_timeout";
+            }
             catch (Exception error) when (error is IOException or AuthenticationException or JsonException or
                 InvalidDataException or SocketException or CryptographicException or InvalidOperationException or TimeoutException or FormatException)
             {
+                disconnectReason = error is EndOfStreamException ? "peer_closed" :
+                    error is IOException or SocketException ? "transport_failure" : "protocol_rejected";
                 if (session == null) SetConnectionIssue(error is AuthenticationException ? "trust_rejected" :
                     error.Message is "session_busy" ? "session_busy" : "connection_rejected");
                 Report($"v3 control rejected or disconnected exception={error.GetType().Name} hresult=0x{error.HResult:X8}");
@@ -246,7 +254,13 @@ public sealed partial class ReceiverHost
                 Trust!.DetachRotationControl(connection);
                 if (session != null)
                 {
-                    var unexpectedLoss = session.State != ReceiverState.Stopping && session.EverStreamed;
+                    var unexpectedLoss = sessionAccepted && !ct.IsCancellationRequested && session.State != ReceiverState.Stopping;
+                    if (unexpectedLoss)
+                    {
+                        Interlocked.Increment(ref controlDisconnects);
+                        Interlocked.Increment(ref networkErrors);
+                        Report($"v3 control lost reason={disconnectReason}");
+                    }
                     ClearCameraSession(session);
                     session.Stop();
                     lock (Gate) if (active == session)
