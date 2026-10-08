@@ -8,6 +8,11 @@ public sealed record CameraControlSnapshot(string SessionId, int Generation,
     IReadOnlyDictionary<string, CameraControlCapability> Capabilities,
     IReadOnlyDictionary<string, double> Applied, IReadOnlySet<string> Pending, string Focus, string Message);
 public sealed record CameraCommandResult(double? Applied, string? Error);
+public sealed record QualitySnapshot(string SessionId, int Generation, string SelectedMode, string EffectiveMode,
+    int SelectedBitrate, int EffectiveBitrate, double DeliveredFps, bool NetworkPressure, bool ThermalPressure, string Reason)
+{
+    public static readonly QualitySnapshot Empty = new("", 0, "", "", 0, 0, 0, false, false, "Capture stopped");
+}
 
 public sealed partial class ReceiverHost
 {
@@ -19,6 +24,7 @@ public sealed partial class ReceiverHost
     private Dictionary<string, double> cameraApplied = [];
     private HashSet<string> cameraPending = [];
     private string cameraFocus = "Unavailable", cameraMessage = "";
+    private QualitySnapshot quality = QualitySnapshot.Empty;
     private sealed record CameraRequest(string SessionId, int Generation, string Control, CameraControlCapability Capability, TaskCompletionSource<CameraCommandResult> Completion);
     private readonly Dictionary<long, CameraRequest> cameraRequests = [];
 
@@ -27,6 +33,7 @@ public sealed partial class ReceiverHost
         lock (cameraGate) return new(cameraSessionId, cameraGeneration, new Dictionary<string, CameraControlCapability>(cameraCapabilities),
             new Dictionary<string, double>(cameraApplied), new HashSet<string>(cameraPending), cameraFocus, cameraMessage);
     }
+    public QualitySnapshot Quality() { lock (cameraGate) return quality; }
     public Task<CameraCommandResult> SetCameraControlAsync(string control, double value, CancellationToken ct = default) =>
         SendCameraControlAsync(control,value,ct,null,null);
     public Task<CameraCommandResult> SetCameraFocusAsync(double x, double y, CancellationToken ct = default) =>
@@ -80,6 +87,7 @@ public sealed partial class ReceiverHost
             foreach (var request in cameraRequests.Values) request.Completion.TrySetResult(new(null, "Capture stopped"));
             cameraRequests.Clear(); cameraCapabilities.Clear(); cameraApplied.Clear(); cameraPending.Clear();
             cameraSessionId = ""; cameraGeneration = 0; cameraFocus = "Unavailable"; cameraMessage = "Capture stopped";
+            quality = QualitySnapshot.Empty;
         }
     }
     private void BeginCameraControlsChange(Session session, int generation)
@@ -92,6 +100,7 @@ public sealed partial class ReceiverHost
             cameraGeneration = generation;
             cameraCapabilities.Clear(); cameraApplied.Clear(); cameraPending.Clear();
             cameraFocus = "Unavailable"; cameraMessage = "Changing camera";
+            quality = QualitySnapshot.Empty;
         }
     }
     private void ReceiveCameraRecord(Session session, JsonElement record)
@@ -99,6 +108,7 @@ public sealed partial class ReceiverHost
         var type = Wire.RequiredString(record, "type");
         if (type == "camera_capability") V3Record.Require(record, type, "session_id", "generation", "option");
         else if (type == "camera_state") V3Record.Require(record, type, "session_id", "generation", "applied", "pending", "focus", "message");
+        else if (type == "quality_state") V3Record.Require(record, type, "session_id", "generation", "selected_mode", "effective_mode", "selected_bitrate", "effective_bitrate", "delivered_fps", "network_pressure", "thermal_pressure", "reason");
         else V3Record.Require(record, type, "session_id", "generation", "request_id", "control", "applied", "error");
         if (V3Record.Hex(record, "session_id", 16) != session.Id) throw new InvalidDataException("stale_session");
         var generation = Wire.RequiredInt(record, "generation");
@@ -135,6 +145,20 @@ public sealed partial class ReceiverHost
                 cameraSessionId = session.Id; cameraGeneration = generation;
             }
             if (generation != cameraGeneration) return;
+            if (type == "quality_state")
+            {
+                var selected = BoundedString(record, "selected_mode", 32);
+                var effective = BoundedString(record, "effective_mode", 32);
+                if (!record.GetProperty("selected_bitrate").TryGetInt32(out var selectedBitrate) || selectedBitrate < 500_000 || selectedBitrate > 100_000_000 ||
+                    !record.GetProperty("effective_bitrate").TryGetInt32(out var effectiveBitrate) || effectiveBitrate < 500_000 || effectiveBitrate > selectedBitrate ||
+                    !record.GetProperty("delivered_fps").TryGetDouble(out var fps) || !double.IsFinite(fps) || fps < 0 || fps > 240 ||
+                    record.GetProperty("network_pressure").ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
+                    record.GetProperty("thermal_pressure").ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new InvalidDataException("invalid_record");
+                quality = new(session.Id, generation, selected, effective, selectedBitrate, effectiveBitrate, fps,
+                    record.GetProperty("network_pressure").GetBoolean(), record.GetProperty("thermal_pressure").GetBoolean(),
+                    BoundedString(record, "reason", 512));
+                return;
+            }
             if (type == "camera_capability")
             {
                 var option = record.GetProperty("option");

@@ -308,6 +308,9 @@ class MainActivity : Activity() {
             trustedDesktops.isEmpty() -> "Connect your PC by scanning its QR."
             else -> ConnectionStatus.message(value, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "your PC")
         }
+        val quality = QualityState.current(value)
+        if (value.state == "Capturing" && quality.reason != "Selected quality is active.")
+            connectionStatus.text = "${connectionStatus.text}\n${quality.reason}"
         stats.text = """
             ${if (trustError.isNotEmpty()) trustError else ""}
             State: ${value.state}${if (value.error.isNotEmpty()) " — ${value.error}" else ""}

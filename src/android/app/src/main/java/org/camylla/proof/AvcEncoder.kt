@@ -31,9 +31,11 @@ class AvcEncoder(
     private val counter = FrameCounter()
     private val sink = DiagnosticSink(output)
     private val callbackHandler = Handler(Looper.getMainLooper())
-    private val bitrate = if (width * height > 1280 * 720) 6_000_000 else 3_000_000
+    private val targetBitrate = if (width * height > 1280 * 720) 6_000_000 else 3_000_000
+    @Volatile private var bitrate = targetBitrate
     val codecName: String = codec.name
     val configuredBitrate: Int get() = bitrate
+    val selectedBitrate: Int get() = targetBitrate
     val surface: Surface
     @Volatile private var stopping = false
     private val drainThread: Thread
@@ -44,11 +46,20 @@ class AvcEncoder(
         }.onFailure { Log.w(TAG, "Sync frame request failed", it) }
     }
 
+    /** Changes only encoder bitrate; mode/generation remain stable. */
+    fun setBitrate(next: Int): Boolean {
+        if (stopping || next == bitrate || next !in 500_000..targetBitrate) return next == bitrate
+        return runCatching {
+            codec.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, next) })
+            bitrate = next
+        }.onFailure { Log.w(TAG, "Bitrate update failed", it) }.isSuccess
+    }
+
     init {
         try {
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                setInteger(MediaFormat.KEY_BIT_RATE, targetBitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, 30)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
