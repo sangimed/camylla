@@ -83,6 +83,10 @@ CI and earlier short physical checks do not substitute for these gates.
   consumer in the recorded samples. Existing visual/lifecycle evidence is in
   [M4.2 validation](android-windows-m4-2.md); the current counters alone do not
   establish unique-frame output or latency.
+  The [focused diagnostic follow-up](recovery-diagnostics-2026-10-08.md)
+  adds user-confirmed moving live video, actual source close/reopen, neutral
+  outage output and automatic recovery on the same Xiaomi/OBS configuration,
+  with zero IPC/decoder errors in the new record.
 - **Recovery:** short Xiaomi Wi-Fi interruptions and automatic recovery are
   recorded in [M4.7 validation](android-windows-m4-7.md). They do not cover the
   full impairment matrix or the five-second recovery target.

@@ -51,6 +51,11 @@ Correlation with reconnects alone does not prove causation.
 - Desktop diagnostics and CSV append `controlDisconnects`,
   `ipcClientDisconnects` and `videoConnections`; existing column names remain.
   CLI diagnostics also expose control losses.
+- Android reports failed camera-control writes before retiring the channel,
+  and logs control establishment, video readiness and queue-pressure/expired-unit
+  resets without message contents or session credentials. A failed camera-write
+  path previously closed the control socket silently. This is instrumentation,
+  not proof that it caused the original 31 EOFs.
 
 These are diagnostic corrections. Transport recovery policy, consumer deadlines
 and capture authorization are unchanged.
@@ -73,8 +78,63 @@ Run on Windows in this workspace on 2026-10-08:
 - Receiver `--camera-controls-self-test` and `--rotation-self-test`: passed.
 
 The timeout case exercises a protocol deadline; it is not an endurance test.
-Tests use synthetic frames and isolated local trust/ports/pipes. No camera
-capture or OBS session was started for this review.
+Tests use synthetic frames and isolated local trust/ports/pipes. The initial
+automated review did not start camera capture or OBS. The later physical check
+below reused an existing phone-authorized capture.
+
+The Android logging follow-up passed offline `:app:testDebugUnitTest
+:app:assembleDebug --no-daemon`: 37 JVM tests and APK build successful. This
+logging-only APK was not installed over the active camera session; the physical
+observations below used the previously installed Android build.
+
+## Focused physical follow-up
+
+Same Xiaomi 2405CPCFBG, Android 16, Windows 11 25H2 and OBS 32.2.2 /
+WebSocket 5.7.4 as the earlier configuration. Android installed version
+`0.2-pairing`, versionCode 2, last update 2026-10-08 21:03:58 device local time;
+desktop diagnostic implementation commit `0ff99fc`, Debug/x64. Phone rear
+1280x720@30, OBS source fixed at 1920x1080 NV12/30 with buffering disabled.
+The phone's foreground camera capture was still active from its prior explicit
+Start. Relaunching the desktop allowed that authorization to reconnect; no
+new capture was started by the agent.
+
+The user confirmed a moving live image in OBS. Deactivating and reactivating
+the actual OBS camera source at 21:07:12.605 and 21:07:16.070 UTC restored its
+live image. The next sampled diagnostics counted one normal IPC client close,
+zero IPC errors, and no network/control loss for that consumer action.
+
+Wi-Fi disable/enable command markers were 21:07:52.735 and 21:08:12.104 UTC,
+19.37 seconds apart. The source screenshot during the outage was neutral black;
+the user confirmed black output followed by automatic moving-video recovery
+without another Start. Receiver events distinguish the video read timeout at
+21:07:54.958 from the control idle timeout at 21:08:00.805. Android logs show
+control-read connection abort, closed video socket and network-unreachable
+connection attempts during this deliberate impairment.
+
+The new control authenticated at 21:08:17.322 and video bound at
+21:08:17.487 UTC; the first sampled resumed decoding was 21:08:21.077 UTC.
+A ping checked later succeeded and a recovered source screenshot was inspected.
+This does **not** establish recovery within five seconds of usable connectivity:
+Wi-Fi enable is not network readiness, and the first checked successful ping
+was after video had already resumed. The 19.37-second marker interval is not
+claimed as the exact 20-second release impairment case.
+
+[Receiver samples](evidence/recovery-20261008-focused.csv) cover startup, healthy
+capture, consumer reopen, the outage and restored capture. Thirty-seven adjacent
+Streaming intervals with unchanged network-error counters averaged 29.98 decoded
+FPS (29.62–30.18). Zero decoder/IPC errors, preview and IPC queue high-water one,
+and NV12 buffer high-water four were recorded. The final counters were two
+network errors (one video timeout and one control loss), one control disconnect,
+one normal IPC client disconnect and two video connections.
+[Action/Android events](evidence/recovery-20261008-focused-events.csv) retain
+only categories and timestamps; the clock column distinguishes Windows and
+Android timestamps. These clocks were not synchronized for latency measurement.
+Camera screenshots and full unsanitized logs stay in ignored local artifacts.
+
+No spontaneous disruption reproduced in these focused checks. The original
+31 EOFs and 19 IPC errors therefore remain unattributed. No recording or
+broadcast was started. The temporary authenticated OBS WebSocket setting was
+restored after the check, and OBS reopened with the camera scene.
 
 ## Remaining physical check
 
