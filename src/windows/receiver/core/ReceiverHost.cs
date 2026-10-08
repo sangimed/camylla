@@ -18,6 +18,7 @@ public sealed partial class ReceiverHost : IDisposable
     private Session? active;
     private readonly object Gate = new();
     private long received, keyframes, decoded, decoderErrors, networkErrors, decoderResets, reconnects;
+    private long controlDisconnects;
     private ulong lastSequence, lastPts, lastAndroidSendUs;
     private long lastReceiveTicks, lastDecodeTicks;
     private long lastPushReceiveToDecodeTicks;
@@ -140,7 +141,7 @@ public sealed partial class ReceiverHost : IDisposable
             lastReceiveTicks, lastDecodeTicks, Interlocked.Read(ref lastPushReceiveToDecodeTicks),
             lastDecodedWidth, lastDecodedHeight, lastDecodedStride,
             frames.PendingDepth, frames.HighWater, frames.Superseded, Interlocked.Read(ref frameEpoch), issue,
-            captureMayBeActive);
+            captureMayBeActive, Interlocked.Read(ref controlDisconnects));
     }
     private void SetConnectionIssue(string? issue)
     {
@@ -152,7 +153,7 @@ public sealed partial class ReceiverHost : IDisposable
         }
     }
 
-    private void Report(string message) => (Log ?? Console.WriteLine)(message);
+    internal void Report(string message) => (Log ?? Console.WriteLine)(message);
     public void Stop()
     {
         try { running?.Cancel(); } catch (ObjectDisposedException) { }
@@ -461,7 +462,7 @@ public sealed record ReceiverSnapshot(string State, string Peer, string SessionI
     ulong LastAndroidSendUs, long LastReceiveTicks, long LastDecodeTicks,
     long LastReceiveToDecodeTicks, uint Width, uint Height, uint Stride,
     int FrameQueueDepth, int FrameQueueHighWater, long SupersededPreviewFrames, long FrameEpoch = 0,
-    string? ConnectionIssue = null, bool CaptureMayBeActive = false);
+    string? ConnectionIssue = null, bool CaptureMayBeActive = false, long ControlDisconnects = 0);
 
 internal enum ReceiverState { Disconnected, Connecting, Authenticating, Negotiating, Streaming, Recovering, Stopping, Error }
 

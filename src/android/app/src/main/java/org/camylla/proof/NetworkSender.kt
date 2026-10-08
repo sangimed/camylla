@@ -72,7 +72,11 @@ class NetworkSender(
         record.put("version", 3).put("session_id", id)
         try { cameraWrites.execute {
             if (!stopping && controlSocket === control && sessionId == id) runCatching { writeControl(control, record.toString()) }
-                .onFailure { runCatching { control.close() } }
+                .onFailure { error ->
+                    if (!stopping && controlSocket === control && sessionId == id)
+                        reportError("Camera control write: ${error.message}")
+                    runCatching { control.close() }
+                }
         } } catch (_: java.util.concurrent.RejectedExecutionException) { /* Bounded status traffic. Next snapshot retries. */ }
     }
 
@@ -123,6 +127,7 @@ class NetworkSender(
         val now = SystemClock.elapsedRealtimeNanos()
         if (!queue.isEmpty && now - queue.first.queuedNs > MAX_AGE_NS ||
             queue.size + 2 > MAX_DEPTH || queue.bytes + bytes.size + (if (syncGate.waitingForKey) config?.size ?: 0 else 0) > MAX_QUEUE_BYTES) {
+            Log.i("CamyllaProof", "Video reset: queue pressure")
             resetLocked()
         }
         if (syncGate.waitingForKey) {
@@ -179,6 +184,7 @@ class NetworkSender(
                 require(welcome.getString("client_nonce") == hello.getString("client_nonce"))
                 PairInvitation.hex(welcome.getString("server_nonce"), 16); PairInvitation.hex(welcome.getString("video_ticket"), 32)
                 sessionId = welcome.getString("session_id")
+                Log.i("CamyllaProof", "Authenticated control session established")
                 onCameraSession(sessionId!!)
                 val id = M4Wire.hex16(sessionId!!)
                 progress = progress.copy(state = "Negotiating")
@@ -221,6 +227,7 @@ class NetworkSender(
                     }
                 }
                 recovery.streaming()
+                Log.i("CamyllaProof", "Video channel ready")
                 progress = progress.streamed(recovery.successfulRecoveries)
                 while (!stopping && !video.isClosed && !control.isClosed) {
                     val unit = synchronized(lock) {
@@ -230,6 +237,7 @@ class NetworkSender(
                         }
                     } ?: continue
                     if (SystemClock.elapsedRealtimeNanos() - unit.queuedNs > MAX_AGE_NS) {
+                        Log.i("CamyllaProof", "Video reset: expired queued unit")
                         synchronized(lock) { resetLocked() }
                         continue
                     }

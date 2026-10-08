@@ -138,6 +138,17 @@ internal static partial class ProductionSelfTest
                 using var started = await Wire.ReadControlAsync(control, lifetime.Token);
                 Check(Wire.RequiredString(started.RootElement, "type") == "started", "trusted start accepted");
                 var value = started.RootElement;
+                using (var busy = await Connect(controlPort, trust.DesktopId, phone, lifetime.Token))
+                {
+                    await Wire.WriteControlAsync(busy, new { type = "start", version = 3, phone_id = phoneId,
+                        client_nonce = ProductionTrust.RandomHex(16), codec = "h264", modes = new[] { "1280x720@30" },
+                        mode = "1280x720@30", lens = "rear" }, lifetime.Token);
+                    using var rejected = await Wire.ReadControlAsync(busy, lifetime.Token);
+                    Check(Wire.RequiredString(rejected.RootElement, "type") == "error", "busy start rejected");
+                }
+                await Task.Delay(50, lifetime.Token);
+                Check(host.Snapshot().ControlDisconnects == 0 && host.Snapshot().SessionId == Wire.RequiredString(value, "session_id"),
+                    "rejected busy start does not count a loss or retire accepted session");
                 object Bind(string? id = null, string? ticket = null) => new { type = "bind", version = 3,
                     session_id = id ?? Wire.RequiredString(value, "session_id"), phone_id = phoneId,
                     client_nonce = nonce, server_nonce = Wire.RequiredString(value, "server_nonce"),
@@ -185,6 +196,8 @@ internal static partial class ProductionSelfTest
             await Task.Delay(100, lifetime.Token);
             Check(host.Snapshot().State == "Disconnected" && host.Frames.PendingDepth == 0,
                 "Desktop Exit acknowledgement retires session and neutralizes output");
+            Check(host.Snapshot().ControlDisconnects == 0, "phone and desktop Stop are not control losses");
+            await TestControlLossDiagnosticsAsync(host, trust, phone, controlPort, lifetime.Token);
             trust.Revoke(phoneId);
             Check(!trust.IsTrusted(phoneId), "revocation persists");
             using (var restored = new ProductionTrust(directory)) Check(!restored.IsTrusted(phoneId), "revocation survives reload");
@@ -197,6 +210,60 @@ internal static partial class ProductionSelfTest
             Console.WriteLine("v3 pairing: one-use invitation, mutual TLS control/video, protected repeat trust, stale/duplicate binds, phone/Desktop Stop, revocation and wrong identities passed");
         }
         finally { lifetime.Cancel(); host.Stop(); await run; }
+        Check(host.Snapshot().ControlDisconnects == 2, "receiver shutdown adds no control loss");
+    }
+    private static async Task TestControlLossDiagnosticsAsync(ReceiverHost host, ProductionTrust trust,
+        X509Certificate2 phone, int port, CancellationToken ct)
+    {
+        var events = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        host.Log += events.Enqueue;
+        async Task<SslStream> Start()
+        {
+            var control = await Connect(port, trust.DesktopId, phone, ct);
+            await Wire.WriteControlAsync(control, new { type = "start", version = 3,
+                phone_id = ProductionTrust.PeerId(phone), client_nonce = ProductionTrust.RandomHex(16),
+                codec = "h264", modes = new[] { "1280x720@30" }, mode = "1280x720@30", lens = "rear" }, ct);
+            using var reply = await Wire.ReadControlAsync(control, ct);
+            Check(Wire.RequiredString(reply.RootElement, "type") == "started", "recovery start accepted");
+            return control;
+        }
+        async Task WaitForLoss(long count)
+        {
+            for (var attempt = 0; attempt < 200; attempt++)
+            {
+                if (host.Snapshot() is { State: "Disconnected" } snapshot && snapshot.ControlDisconnects == count) return;
+                await Task.Delay(10, ct);
+            }
+            throw new Exception("Control loss did not retire the session");
+        }
+        try
+        {
+            var networkBefore = host.Snapshot().NetworkErrors;
+            using (var closed = await Start()) { }
+            await WaitForLoss(1);
+            Check(host.Snapshot().NetworkErrors == networkBefore + 1 &&
+                events.Any(e => e == "v3 control lost reason=peer_closed"),
+                "control EOF is counted once even between diagnostic samples");
+            using (var idle = await Start())
+            {
+                // Exercise the actual eight-second heartbeat deadline, not an endurance gate.
+                try { using var unexpected = await Wire.ReadControlAsync(idle, ct); throw new Exception("Idle control survived its deadline"); }
+                catch (IOException) { }
+            }
+            await WaitForLoss(2);
+            Check(host.Snapshot().NetworkErrors == networkBefore + 2 &&
+                events.Any(e => e == "v3 control lost reason=idle_timeout"),
+                "control idle timeout is counted and distinguished from EOF");
+            using var recovered = await Start();
+            await Wire.WriteControlAsync(recovered, new { type = "stop", version = 3,
+                session_id = host.Snapshot().SessionId }, ct);
+            using var stopped = await Wire.ReadControlAsync(recovered, ct);
+            Check(Wire.RequiredString(stopped.RootElement, "type") == "stopped", "recovered session stops normally");
+            await WaitForLoss(2);
+            Check(host.Snapshot().NetworkErrors == networkBefore + 2, "intentional Stop after recovery adds no loss");
+            Console.WriteLine("Control loss diagnostics: EOF, heartbeat timeout, recovery start and intentional Stop passed");
+        }
+        finally { host.Log -= events.Enqueue; }
     }
     private static X509Certificate2 TestIdentity(string name)
     {
