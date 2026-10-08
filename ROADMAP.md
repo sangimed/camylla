@@ -82,13 +82,13 @@ The [physical M3 record](docs/validation/android-windows-m3.md) preserves the fi
 
 Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues/20).
 
-- [ ] Build the focused Windows setup and preview experience.
-- [ ] Add camera/mode controls and persistent settings.
+- [x] Build the focused Windows setup and preview experience.
+- [ ] Add camera/mode controls and persistent settings. Implementation is merged; the remaining physical camera matrix stays in [#26](https://github.com/sangimed/camylla/issues/26).
 - [ ] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets; see [UX scope and research](docs/camera-controls-ux.md).
-- [ ] Add pairing and repeat-use workflows.
-- [ ] Add actionable errors and recovery states.
+- [x] Add pairing and repeat-use workflows.
+- [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37; additional S21/OBS edge-case evidence is tracked in [#38](https://github.com/sangimed/camylla/issues/38).
 - [ ] Add degradation reporting for network/thermal pressure.
-- [ ] Ensure disconnected output is neutral rather than stale.
+- [x] Ensure disconnected output is neutral rather than stale.
 
 ### M5 — Wider alpha / beta
 
@@ -133,5 +133,9 @@ These are intentionally not part of the current roadmap unless a later design de
 Use this file for milestone-level direction.
 
 Use GitHub Issues for concrete tasks that can be implemented, reviewed, and closed. Pull requests should reference the issue they advance when practical.
+
+After a tested pull request merges into `main`, update this roadmap in the
+follow-up change for every completed milestone-level item. Keep unfinished
+physical matrices and release evidence linked from their GitHub issues.
 
 The detailed technical gates, rationale, and exit criteria remain in [docs/design.md](docs/design.md).
