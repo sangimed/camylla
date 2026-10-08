@@ -41,3 +41,19 @@ reports and adapts; it is not a physical performance pass.
 - Decide from those measurements whether an additional resolution/FPS mode
   adaptation is required. The current bounded bitrate change is the only
   automatic adaptation implemented here.
+
+## Xiaomi tablet observation, 2026-10-08
+
+On Xiaomi 2405CPCFBG / Android 16, the M4.7 debug APK was installed and started
+against the Windows 11 receiver. At 1280x720@30, Windows reported 30.0 delivered
+FPS and selected/effective bitrate of 3.0/3.0 Mb/s. The receiver log reached
+about 30 decoded access units per second with zero decoder errors.
+
+Wi-Fi was disabled twice for about 10 seconds and restored. Windows showed
+`Recovering video`, then returned to `Streaming · 1280 × 720`; a fresh video
+channel was authenticated each time and decoding resumed. The quality row
+showed the last reported 3.0/3.0 Mb/s during the brief interruption. This
+confirms connection recovery, but does not establish that the temporary 75%
+bitrate reduction was observed at the receiver during pressure. Severe thermal
+adaptation was not induced. This Xiaomi observation does not satisfy the S21
+Ultra physical matrix above.
