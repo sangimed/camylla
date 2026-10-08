@@ -86,7 +86,7 @@ Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues
 - [ ] Add camera/mode controls and persistent settings. Implementation is merged; the remaining physical camera matrix stays in [#26](https://github.com/sangimed/camylla/issues/26).
 - [ ] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets; see [UX scope and research](docs/camera-controls-ux.md).
 - [x] Add pairing and repeat-use workflows.
-- [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37; additional Android/OBS edge-case evidence is tracked in [#38](https://github.com/sangimed/camylla/issues/38).
+- [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37. PR #41 adds tested recovery diagnostics and user-confirmed Xiaomi/OBS live output, source reopen, neutral outage output and automatic recovery; additional Android/OBS edge-case evidence remains tracked in [#38](https://github.com/sangimed/camylla/issues/38).
 - [x] Implement delivered-quality reporting and bounded network/severe-thermal bitrate adaptation. M4.7 merged in PR #39; automated checks pass, and Xiaomi 720p30/Wi-Fi recovery evidence is recorded in [the M4.7 validation record](docs/validation/android-windows-m4-7.md).
 - [ ] Complete M4.7 physical quality validation on a representative Android phone: healthy 720p30/1080p30, observe effective bitrate reduction under controlled network pressure, and record a safely observable thermal case. The Xiaomi run confirmed recovery but did not observe the bitrate reduction; thermal remains untested. Tracking: [#40](https://github.com/sangimed/camylla/issues/40).
 - [x] Ensure disconnected output is neutral rather than stale.
@@ -97,7 +97,8 @@ Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues
 
 - [ ] Add a second Android phone to the compatibility matrix.
 - [ ] Add a Windows integrated-GPU test configuration.
-- [ ] Diagnose observed reconnects and validate streaming, bounded resources, OBS output and recovery with focused functional checks. The 2026-10-08 observations recorded zero decoder errors but five reconnect episodes; see [release gate results](docs/validation/v1-release-gates.md). OBS is the required release consumer; no minimum test duration applies.
+- [x] Improve transport/IPC diagnostics and record focused streaming, bounded-resource and OBS lifecycle/recovery evidence on the Xiaomi configuration. PR #41 is merged and tested; see [the recovery validation record](docs/validation/recovery-diagnostics-2026-10-08.md).
+- [ ] Diagnose the original spontaneous reconnects and complete the required recovery scenarios and timing measurements. The original event log contains more disruptions than the sampled states showed; the focused follow-up did not reproduce them. See [release gate results](docs/validation/v1-release-gates.md). OBS is the required release consumer; no minimum test duration applies.
 - [ ] Expand parser/security/state-machine testing and fuzzing where appropriate.
 - [ ] Audit bundled dependencies, runtimes, licenses, and notices.
 - [ ] Validate ordinary offline install, upgrade, uninstall, and cleanup.
