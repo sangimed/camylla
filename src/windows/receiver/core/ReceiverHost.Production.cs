@@ -185,7 +185,7 @@ public sealed partial class ReceiverHost
                         BeginCameraControlsChange(session, Wire.RequiredInt(message.RootElement, "generation"));
                         continue;
                     }
-                    if (kind is "camera_capability" or "camera_state" or "camera_result")
+                    if (kind is "camera_capability" or "camera_state" or "camera_result" or "quality_state")
                     {
                         ReceiveCameraRecord(session, message.RootElement);
                         continue;

@@ -139,6 +139,10 @@ public sealed partial class MainWindow : Window
                 snapshot.Width, snapshot.Height, snapshot.ConnectionIssue);
             StateText.Text = status.Title;
             RecoveryHelp.Text = status.Help;
+            var quality = receiver.Quality();
+            QualityText.Text = quality.SessionId.Length == 0 ? "" :
+                $"Delivered {quality.DeliveredFps:0.0} FPS · selected {quality.SelectedMode} at {quality.SelectedBitrate / 1_000_000.0:0.0} Mb/s · effective {quality.EffectiveMode} at {quality.EffectiveBitrate / 1_000_000.0:0.0} Mb/s" +
+                (quality.Reason == "Selected quality is active." ? "" : $"\n{quality.Reason}");
             RetryReceiverButton.Visibility = receiverTask?.IsFaulted == true ? Visibility.Visible : Visibility.Collapsed;
             UpdatePairingUi();
             UpdateCameraControls();

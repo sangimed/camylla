@@ -38,6 +38,7 @@ class CaptureService : LifecycleService() {
     @Volatile internal var cameraStatus = CameraStatus()
         private set
     private var lastStatusSent = 0L
+    private var lastQualitySent = 0L
     private var advertisedSession: String? = null
     private var advertisedGeneration = 0
     private var lastRemoteId = 0L
@@ -140,7 +141,18 @@ class CaptureService : LifecycleService() {
             val file = File(File(cacheDir, "diagnostics").apply { mkdirs() }, "capture-${System.currentTimeMillis()}.h264")
             file.parentFile?.listFiles { f -> f.extension == "h264" }?.sortedByDescending { it.lastModified() }?.drop(2)?.forEach { it.delete() }
             val activeEncoder = AvcEncoder(mode.size.width, mode.size.height, file,
-                onUpdate = { p -> if (token == generation) snapshot = snapshot.copy(frames = p.frames, keyframes = p.keyframes, fps = p.fps, timestampUs = p.timestampUs, timestampGaps = p.timestampGaps, sinkBytes = p.sinkBytes, sinkLimitReached = p.sinkLimitReached) },
+                onUpdate = { p -> if (token == generation) {
+                    val active = encoder
+                    if (active != null) {
+                        val underPressure = networkSender?.stats()?.state == "Recovering" ||
+                            snapshot.thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
+                        val wanted = if (underPressure) active.selectedBitrate * 3 / 4 else active.selectedBitrate
+                        active.setBitrate(wanted)
+                        snapshot = snapshot.copy(bitrate = active.configuredBitrate, selectedBitrate = active.selectedBitrate)
+                    }
+                    snapshot = snapshot.copy(frames = p.frames, keyframes = p.keyframes, fps = p.fps, timestampUs = p.timestampUs, timestampGaps = p.timestampGaps, sinkBytes = p.sinkBytes, sinkLimitReached = p.sinkLimitReached)
+                    publishNetwork()
+                } },
                 onError = { error -> main.post { if (token == generation) { endSession(); fail(error) } } },
                 onCodecConfig = { bytes -> if (token == generation) networkSender?.codecConfig(bytes) },
                 onAccessUnit = { bytes, ptsUs, key -> if (token == generation) networkSender?.offer(bytes, ptsUs, key) })
@@ -151,7 +163,7 @@ class CaptureService : LifecycleService() {
                 } } },
                 { error -> main.post { if (token == generation) { done(null, error); endSession(); fail(error) } } },
                 { main.post { if (token == generation && sessionStartMs != 0L) {
-                    snapshot = snapshot.copy(state = "Capturing", resolution = "${mode.size.width}x${mode.size.height}", codec = activeEncoder.codecName, bitrate = activeEncoder.configuredBitrate, outputFile = file.absolutePath)
+                    snapshot = snapshot.copy(state = "Capturing", resolution = "${mode.size.width}x${mode.size.height}", codec = activeEncoder.codecName, bitrate = activeEncoder.configuredBitrate, selectedBitrate = activeEncoder.selectedBitrate, outputFile = file.absolutePath)
                     settings.preferredCamera = current.id; settings.preferredMode = mode.name
                     done(cameras().indexOfFirst { it.id == current.id }.toDouble(), null); publishNetwork(true)
                 } } })
@@ -173,6 +185,15 @@ class CaptureService : LifecycleService() {
             val applied = state.applied + mapOf("camera" to cameras().indexOfFirst { it.id == state.camera }.toDouble(), "mode" to mode.ordinal.toDouble())
             sender.cameraRecord(JSONObject().put("type", "camera_state").put("generation", state.generation).put("applied", JSONObject(applied))
                 .put("pending", org.json.JSONArray(state.pending.toList())).put("focus", state.focus).put("message", state.message))
+        }
+        if (force || SystemClock.elapsedRealtime() - lastQualitySent >= 1_000) {
+            lastQualitySent = SystemClock.elapsedRealtime()
+            val quality = QualityState.current(stats())
+            sender.cameraRecord(JSONObject().put("type", "quality_state").put("generation", state.generation)
+                .put("selected_mode", quality.selectedMode).put("effective_mode", quality.effectiveMode)
+                .put("selected_bitrate", quality.selectedBitrate).put("effective_bitrate", quality.effectiveBitrate)
+                .put("delivered_fps", quality.deliveredFps).put("network_pressure", quality.networkPressure)
+                .put("thermal_pressure", quality.thermalPressure).put("reason", quality.reason))
         }
     }
     private fun remote(message: JSONObject, reply: (JSONObject) -> Unit) {

@@ -9,6 +9,7 @@ data class StatsSnapshot(
     val resolution: String = "",
     val codec: String = "",
     val bitrate: Int = 0,
+    val selectedBitrate: Int = 0,
     val frames: Long = 0,
     val keyframes: Long = 0,
     val fps: Double = 0.0,
@@ -25,6 +26,28 @@ data class StatsSnapshot(
     val error: String = "",
     val network: NetworkProgress = NetworkProgress(),
 )
+
+data class QualityState(val selectedMode: String, val effectiveMode: String, val selectedBitrate: Int, val effectiveBitrate: Int, val deliveredFps: Double,
+    val networkPressure: Boolean, val thermalPressure: Boolean, val reason: String) {
+    companion object {
+        fun current(snapshot: StatsSnapshot): QualityState {
+            val network = snapshot.network.state == "Recovering"
+            val thermal = snapshot.thermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE
+            val slow = snapshot.elapsedSeconds >= 5 && snapshot.fps in 0.1..<27.0
+            val reduced = snapshot.selectedBitrate > 0 && snapshot.bitrate in 1..<snapshot.selectedBitrate
+            val reason = when {
+                thermal && reduced -> "Thermal pressure; bitrate is temporarily reduced."
+                thermal -> "Thermal pressure; automatic quality adaptation is unavailable."
+                network && reduced -> "Network recovery in progress; bitrate is temporarily reduced."
+                network -> "Network recovery in progress; waiting for a fresh video connection."
+                slow -> "Delivered frame rate is below the 30 FPS target; automatic quality adaptation is unavailable."
+                else -> "Selected quality is active."
+            }
+            return QualityState(snapshot.requestedMode, snapshot.requestedMode, snapshot.selectedBitrate, snapshot.bitrate, snapshot.fps,
+                network, thermal, reason)
+        }
+    }
+}
 
 /** Counts encoded access units, not requested camera frames. The gap count is diagnostic, not proof of a dropped frame. */
 class FrameCounter(private val windowUs: Long = 5_000_000L) {

@@ -34,6 +34,13 @@ internal static partial class ProductionSelfTest
             }
             await Capability("zoom"); await Capability("focus", "Fixed-focus lens"); await State();
             await WaitFor(() => host.CameraControls().Capabilities.Count == 2);
+            await Wire.WriteControlAsync(control, new { type = "quality_state", version = 3, session_id = id, generation = 1,
+                selected_mode = "1280x720@30", effective_mode = "1280x720@30", selected_bitrate = 3000000,
+                effective_bitrate = 2250000, delivered_fps = 28.5, network_pressure = true, thermal_pressure = false,
+                reason = "Network recovery in progress; bitrate is temporarily reduced." }, lifetime.Token);
+            await WaitFor(() => host.Quality().SessionId == id);
+            Check(host.Quality().EffectiveBitrate == 2250000 && host.Quality().NetworkPressure,
+                "quality state is bounded and kept apart from diagnostics");
             Check((await host.SetCameraControlAsync("focus", 2)).Error == "Fixed-focus lens", "explicit unsupported reason");
             Check((await host.SetCameraControlAsync("zoom", double.NaN)).Error != null, "nonfinite value rejected locally");
             Check((await host.SetCameraControlAsync("zoom", 5)).Error != null, "out-of-range value rejected locally");
@@ -81,7 +88,7 @@ internal static partial class ProductionSelfTest
             await Wire.WriteControlAsync(control,new { type = "camera_changing",version = 3,session_id = id,generation = 3 },lifetime.Token);
             await WaitFor(() => host.CameraControls().Generation == 3);
             Check(host.CameraControls().Applied.Count == 0 && host.CameraControls().Capabilities.Count == 0 &&
-                host.Snapshot().State == "Recovering", "camera change immediately clears stale controls and publication state");
+                host.Quality().SessionId.Length == 0 && host.Snapshot().State == "Recovering", "camera change immediately clears stale controls, quality and publication state");
             await Wire.WriteControlAsync(control,new { type = "camera_reconfigure",version = 3,session_id = id,
                 request_nonce = ProductionTrust.RandomHex(16),mode = "1920x1080@30",lens = "front",generation = 3 },lifetime.Token);
             using var renewed = await Wire.ReadControlAsync(control,lifetime.Token);
