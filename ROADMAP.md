@@ -83,8 +83,8 @@ The [physical M3 record](docs/validation/android-windows-m3.md) preserves the fi
 Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues/20).
 
 - [x] Build the focused Windows setup and preview experience.
-- [ ] Add camera/mode controls and persistent settings. Implementation is merged; the remaining physical camera matrix stays in [#26](https://github.com/sangimed/camylla/issues/26).
-- [ ] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets; see [UX scope and research](docs/camera-controls-ux.md).
+- [x] Add camera/mode controls and persistent settings. Implementation and user acceptance on the Xiaomi/Windows/OBS configuration are merged; see [#26](https://github.com/sangimed/camylla/issues/26).
+- [x] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets. PR #44 is merged and tested; the user confirmed natural phone/Windows/OBS proportions and working controls on the final APK. See [camera validation](docs/validation/camera-pr44-retest-2026-10-09.md) and [UX scope](docs/camera-controls-ux.md).
 - [x] Add pairing and repeat-use workflows.
 - [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37. PR #41 adds tested recovery diagnostics and user-confirmed Xiaomi/OBS live output, source reopen, neutral outage output and automatic recovery; additional Android/OBS edge-case evidence remains tracked in [#38](https://github.com/sangimed/camylla/issues/38).
 - [x] Implement delivered-quality reporting and bounded network/severe-thermal bitrate adaptation. M4.7 merged in PR #39; automated checks pass, and Xiaomi 720p30/Wi-Fi recovery evidence is recorded in [the M4.7 validation record](docs/validation/android-windows-m4-7.md).
