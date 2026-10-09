@@ -27,3 +27,7 @@ _Avoid_: Connection, pairing
 **Paired desktop**:
 A desktop whose identity the user has explicitly trusted and can revoke. Pairing does not by itself authorize camera capture.
 _Avoid_: Discovered desktop, active session
+
+**Focus target**:
+The area of the phone's camera picture the user selects for autofocus. Its indicator belongs to the phone preview and is absent from the Camylla webcam picture.
+_Avoid_: Focus success, focus lock

@@ -25,7 +25,8 @@ import java.util.concurrent.TimeUnit
 internal data class CameraStatus(val camera: String = "", val mode: String = "", val generation: Int = 0,
     val options: List<CameraOption> = emptyList(), val applied: Map<String, Double> = emptyMap(),
     val pending: Set<String> = emptySet(), val focus: String = "Unavailable", val message: String = "",
-    val histogram: IntArray = IntArray(64), val previewRotation: Int = 0)
+    val histogram: IntArray = IntArray(64), val previewRotation: Int = 0,
+    val focusTarget: FocusFeedback.Target? = null)
 
 /** Camera2 owns sensor controls and capture-result confirmation. GL owns explicitly labelled
  * software adjustments and independent output transforms; overlays never enter the encoder.
@@ -56,6 +57,10 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
     private var tappedFocus = false
     private var focusDeadline = 0L
     private var focus = "Starting"
+    private val focusFeedback = FocusFeedback()
+    private var previewSurface: Surface? = null
+    private var previewWidth = 0
+    private var previewHeight = 0
     private var message = ""
     private var ready = false
     private var failed = false
@@ -107,12 +112,16 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         }, handler)
     }
     fun attachPreview(surface: Surface?, width: Int, height: Int) { handler.post {
+        if (surface !== previewSurface || width != previewWidth || height != previewHeight) focusFeedback.clear()
+        previewSurface = surface; previewWidth = width; previewHeight = height
         if (!closed) runCatching { renderer?.attach(surface, width, height) }.onFailure { message = "Preview surface unavailable: ${it.message}"; publish() }
     } }
+    fun clearFocusFeedback() { handler.post { focusFeedback.clear(); publish() } }
     fun displayRotation(degrees: Int) { handler.post {
         if (!closed && desired["orientationLock"] != 1.0) {
             val sensor = entry.characteristics.get(C.SENSOR_ORIENTATION) ?: 0
             val angle = (sensor - degrees * (if (entry.facing == C.LENS_FACING_FRONT) -1 else 1) + 360) % 360
+            if (angle != renderer?.previewRotation) focusFeedback.clear()
             desired["previewRotation"] = angle.toDouble(); renderer?.previewRotation = angle
             publish()
         }
@@ -166,6 +175,8 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         val rejected = admission.find { it.command.id == p.id }
         if (rejected != null) { desired.clear(); desired.putAll(before); completion(null,rejected.error); return@post }
         pending[key] = p
+        if (key in setOf("zoom", "previewRotation", "previewMirror", "focusMode", "focusDistance") || key == "focusLock" && value == 0.0)
+            focusFeedback.clear()
         if (key == "previewRotation") { desired["orientationLock"] = 1.0; renderer?.previewRotation = value.toInt() }
         try {
             renderer?.values = desired.toMap()
@@ -178,7 +189,7 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         val keys = pending.filterValues { it.owner == owner }.keys.toList()
         for (key in keys) reject(key, "Cancelled")
         if (keys.isNotEmpty()) {
-            if ("focusPoint" in keys) { tappedFocus = false; focusRegion = null; desired["focusMode"] = defaultAf(entry) }
+            if ("focusPoint" in keys) { tappedFocus = false; focusRegion = null; desired["focusMode"] = defaultAf(entry); focusFeedback.clear() }
             revision++; renderer?.values = desired.toMap()
             runCatching { repeatRequest() }; publish()
         }
@@ -186,10 +197,8 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
     fun tap(x: Double, y: Double, width: Int, height: Int, owner: Long? = null, output: Boolean = false,
         completion: (Double?, String?) -> Unit = { _, _ -> }) { handler.post {
         if (closed || !ready) { completion(null, "Camera not ready"); return@post }
+        if (width <= 0 || height <= 0) { completion(null, "Preview geometry unavailable"); return@post }
         val c = entry.characteristics
-        if ((c.get(C.CONTROL_MAX_REGIONS_AF) ?: 0) == 0 || c.get(C.CONTROL_AF_AVAILABLE_MODES)?.contains(R.CONTROL_AF_MODE_AUTO) != true) {
-            message = "Tap focus unavailable on this lens"; focus = "Unavailable"; completion(null,message); publish(); return@post
-        }
         val angle = if (output) desired.getValue("outputRotation").toInt() else renderer?.previewRotation ?: 0
         val aspect = if (angle % 180 == 0) mode.size.width.toDouble() / mode.size.height else mode.size.height.toDouble() / mode.size.width
         val rectWidth = minOf(width.toDouble(), height * aspect); val rectHeight = rectWidth / aspect
@@ -205,6 +214,10 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
             (left + croppedWidth - active.left) / active.width(), (top + croppedHeight - active.top) / active.height())
         val point = FocusCoordinates.sensorPoint(x, y, image, normalized, angle, desired[if (output) "outputMirror" else "previewMirror"] == 1.0)
             ?: run { completion(null,"Tap is outside the camera image"); return@post }
+        if ((c.get(C.CONTROL_MAX_REGIONS_AF) ?: 0) == 0 || c.get(C.CONTROL_AF_AVAILABLE_MODES)?.contains(R.CONTROL_AF_MODE_AUTO) != true) {
+            focusFeedback.clear()
+            message = "Tap focus unavailable on this lens"; focus = "Unavailable"; completion(null,message); publish(); return@post
+        }
         val px = active.left + (point.x * active.width()).toInt(); val py = active.top + (point.y * active.height()).toInt()
         val radius = maxOf(8, crop.width() / 30)
         val target = Pending(++requestId,revision + 1,1.0,SystemClock.elapsedRealtime()+3_000,owner,completion)
@@ -216,9 +229,25 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         tappedFocus = true; desired["focusLock"] = 0.0; focus = "Acquiring"; focusDeadline = SystemClock.elapsedRealtime() + 5_000; revision++
         pending.remove("focusPoint")?.completion?.invoke(null,"Superseded")
         pending["focusPoint"] = target
+        focusFeedback.clear()
+        if (!output && width == previewWidth && height == previewHeight)
+            focusFeedback.begin(revision, x, y, width, height, SystemClock.elapsedRealtime())
         try {
+            // Reset the preceding acquisition, including when the new tap hits the same region.
+            val cancel = request(); put(cancel, R.CONTROL_AF_TRIGGER, R.CONTROL_AF_TRIGGER_CANCEL)
+            session?.capture(cancel.build(), callback, handler)
             val builder = request(); put(builder, R.CONTROL_AF_TRIGGER, R.CONTROL_AF_TRIGGER_START)
-            session?.capture(builder.build(), callback, handler)
+            session?.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureStarted(session: CameraCaptureSession, request: R, timestamp: Long, frameNumber: Long) {
+                    if (!closed) focusFeedback.triggered(target.revision, frameNumber)
+                }
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: R, result: TotalCaptureResult) {
+                    callback.onCaptureCompleted(session, request, result)
+                }
+                override fun onCaptureFailed(session: CameraCaptureSession, request: R, failure: CaptureFailure) {
+                    callback.onCaptureFailed(session, request, failure)
+                }
+            }, handler)
             repeatRequest(); publish()
         } catch (error: Exception) { message = "Tap focus failed: ${error.message}"; focus = "Failed"; reject("focusPoint",message); publish() }
     } }
@@ -287,6 +316,7 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
                 if (kotlin.math.abs(value - p.value) <= tolerance) {
                     val confirmed = commands.complete(gateCommand(key,p),value,null,SystemClock.elapsedRealtime())
                     pending.remove(key); message = confirmed?.error ?: "${options[key]?.label} applied"; publish()
+                    if (key == "focusLock" && confirmed?.applied == 1.0) focusFeedback.locked(SystemClock.elapsedRealtime())
                     p.completion(confirmed?.applied, confirmed?.error ?: if (confirmed == null) "Obsolete command" else null)
                 }
             }
@@ -298,10 +328,19 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
                 V.CONTROL_AF_STATE_ACTIVE_SCAN, V.CONTROL_AF_STATE_PASSIVE_SCAN -> "Acquiring"
                 else -> if (tappedFocus) "Acquiring" else "Auto"
             }
+            val acquisition = when (sensorResult.get(V.CONTROL_AF_STATE)) {
+                V.CONTROL_AF_STATE_FOCUSED_LOCKED -> true
+                V.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED -> false
+                else -> null
+            }
+            focusFeedback.result(tag, result.frameNumber, actual["focusPoint"] == 1.0, acquisition, SystemClock.elapsedRealtime())
         }
         override fun onCaptureFailed(session: CameraCaptureSession, request: R, failure: CaptureFailure) {
+            if (closed || failed) return
+            val tag = request.tag as? Long ?: return
             message = "Camera capture rejected (reason ${failure.reason})"
-            for (key in pending.keys.toList()) if (key !in software) reject(key, message)
+            for ((key, p) in pending.toMap()) if (key !in software && tag >= p.revision) reject(key, message)
+            if (tag >= (focusFeedback.visible(SystemClock.elapsedRealtime())?.revision ?: Long.MAX_VALUE)) focusFeedback.fail(SystemClock.elapsedRealtime())
             publish()
         }
     }
@@ -344,7 +383,7 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
     private fun reject(key: String, reason: String) {
         pending.remove(key)?.let { p -> commands.cancel(gateCommand(key,p),reason); p.completion(null,reason) }
         desired[key] = applied[key] ?: defaults(entry).getValue(key)
-        if (key == "focusPoint") { tappedFocus = false; focusRegion = null; desired["focusMode"] = defaultAf(entry) }
+        if (key == "focusPoint") { tappedFocus = false; focusRegion = null; desired["focusMode"] = defaultAf(entry); focusFeedback.fail(SystemClock.elapsedRealtime()) }
         renderer?.values = desired.toMap()
         if (key == "previewRotation") renderer?.previewRotation = desired.getValue(key).toInt()
         if (!closed && ready) runCatching { repeatRequest() }
@@ -355,13 +394,16 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         if (closed) return
         val now = SystemClock.elapsedRealtime()
         for ((key, p) in pending.toMap()) if (now >= p.deadline) reject(key, "${options[key]?.label}: camera did not confirm application")
-        if (tappedFocus && focus == "Acquiring" && now >= focusDeadline) focus = "Focus timed out"
+        if (tappedFocus && now >= focusDeadline) {
+            focusFeedback.fail(now)
+            if (focus == "Acquiring") focus = "Focus timed out"
+        }
         publish(); handler.postDelayed(::tick, 100)
     }
     private fun publish() {
         if (closed) return
         status = CameraStatus(entry.id, mode.name, generation, options.values.toList(), applied.toMap(), pending.keys.toSet(), focus, message.take(1000),
-            renderer?.histogram?.get() ?: IntArray(64), renderer?.previewRotation ?: 0)
+            renderer?.histogram?.get() ?: IntArray(64), renderer?.previewRotation ?: 0, focusFeedback.visible(SystemClock.elapsedRealtime()))
         onStatus(status)
     }
     private fun fatal(reason: String) { if (!closed && !failed) { failed = true; onFatal(reason) } }

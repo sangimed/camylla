@@ -59,11 +59,19 @@ class MainActivity : Activity() {
     private lateinit var lensChoice: Button
     private lateinit var previewPlaceholder: TextView
     private lateinit var focusBadge: TextView
+    private lateinit var focusTargetView: FocusTargetView
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
             showStats()
             handler.postDelayed(this, 1000)
+        }
+    }
+    private val refreshFocus = object : Runnable {
+        override fun run() {
+            val target = if (service?.stats()?.state == "Capturing") service?.cameraStatus?.focusTarget else null
+            focusTargetView.update(target)
+            handler.postDelayed(this, 50)
         }
     }
     private val connection = object : ServiceConnection {
@@ -80,7 +88,7 @@ class MainActivity : Activity() {
             attachPreview()
             showStats()
         }
-        override fun onServiceDisconnected(name: ComponentName) { service = null }
+        override fun onServiceDisconnected(name: ComponentName) { service = null; focusTargetView.update(null) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -213,6 +221,8 @@ class MainActivity : Activity() {
             }
         }
         previewFrame.addView(histogramView, FrameLayout.LayoutParams(-1,-1))
+        focusTargetView = FocusTargetView(this)
+        previewFrame.addView(focusTargetView, FrameLayout.LayoutParams(-1,-1))
         focusBadge = TextView(this).apply {
             setTextColor(android.graphics.Color.WHITE); setBackgroundColor(0xAA000000.toInt())
             setPadding(dp(8), dp(4), dp(8), dp(4)); textSize = 16f
@@ -221,9 +231,14 @@ class MainActivity : Activity() {
         previewFrame.addView(focusBadge, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.START))
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { service?.tapFocus(e.x.toDouble(), e.y.toDouble(), previewView.width, previewView.height); return true }
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                service?.tapFocus(e.x.toDouble(), e.y.toDouble(), previewView.width, previewView.height) { error ->
+                    if (error != null && error !in setOf("Superseded", "Tap is outside the camera image")) showNotice(error)
+                }
+                return true
+            }
             override fun onLongPress(e: MotionEvent) { service?.control("focusLock", 1.0) }
-        })
+        }).apply { setOnDoubleTapListener(null) }
         val pinch = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             var last = 0L
             override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -234,11 +249,23 @@ class MainActivity : Activity() {
                 service?.control("zoom", ((state.applied["zoom"] ?: 1.0) * detector.scaleFactor).coerceIn(o.min,o.max)); return true
             }
         })
-        previewView.setOnTouchListener { _, event -> pinch.onTouchEvent(event); if (!pinch.isInProgress) gestures.onTouchEvent(event); true }
+        var multiplePointers = false
+        previewView.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) multiplePointers = false
+            if (event.pointerCount > 1 && !multiplePointers) {
+                multiplePointers = true
+                val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                gestures.onTouchEvent(cancel); cancel.recycle()
+                service?.clearFocusFeedback(); focusTargetView.update(null)
+            }
+            pinch.onTouchEvent(event)
+            if (!multiplePointers) gestures.onTouchEvent(event)
+            true
+        }
         previewView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) { attachPreview() }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { attachPreview() }
-            override fun surfaceDestroyed(holder: SurfaceHolder) { service?.attachPreview(null, 1, 1) }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { focusTargetView.update(null); service?.attachPreview(null, 1, 1) }
         })
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         controls.addView(selections)
@@ -326,10 +353,13 @@ class MainActivity : Activity() {
         bound = bindService(Intent(this, CaptureService::class.java), connection, Context.BIND_AUTO_CREATE)
         refreshDesktops()
         handler.post(refresh)
+        handler.post(refreshFocus)
     }
 
     override fun onStop() {
         handler.removeCallbacks(refresh)
+        handler.removeCallbacks(refreshFocus)
+        focusTargetView.update(null)
         service?.attachPreview(null, 1, 1)
         if (bound) unbindService(connection)
         bound = false
