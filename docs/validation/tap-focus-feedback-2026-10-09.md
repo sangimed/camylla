@@ -55,8 +55,30 @@ Pending direct user checks with a phone-user-started session:
 - Confirm Windows/OBS picture remains clean, with no focus square or result symbols.
 - Record unavailable/fixed-focus cases only on actually tested lenses.
 
-No physical PASS is inferred from counters or synthetic tests. Issue #60 remains
-open and no roadmap item is marked complete before tested merge and acceptance.
+The list above records the original detailed checklist, rather than claiming
+each scenario was individually measured.
+
+## User acceptance and merge
+
+The user explicitly started capture on the tablet, reported the phone preview
+and working focus, then requested that the desktop client be launched. The
+desktop client was opened and receiver diagnostics changed to Streaming at
+1280x720. The user confirmed the visible desktop picture: “Oui, je vois le retour
+et ça a l'air d'être bon”, followed by “On valide”, and authorized merging PR #62.
+
+This records user acceptance of the delivered focus interaction and desktop
+return on the Xiaomi/Windows configuration. It does not add individual physical
+PASS claims for every lock, rapid-tap, transform or unsupported-lens scenario;
+no new direct OBS observation was reported in this follow-up. Preview-only
+separation and the existing synthetic clean-output tests remain the evidence
+for overlay isolation.
+
+The tested implementation is `da92e43651b1bd8f834fb1805522efb9eaa7448c`.
+Both [Android and Windows CI checks](https://github.com/sangimed/camylla/actions/runs/37991172177)
+passed. [PR #62](https://github.com/sangimed/camylla/pull/62) merged into main at
+`484ea635c34742117674db15afc574df4ac0f92d` on 2026-10-09. Issue #60 can close
+for the user-accepted enhancement; broader release/hardware checks remain in
+their existing validation issues.
 
 ## API references
 
