@@ -33,14 +33,16 @@ public sealed partial class MainWindow
     }
     private readonly Dictionary<string, CameraEditor> cameraEditors = [];
     private string cameraUiSession = "";
-    private int cameraUiGeneration, cameraUiCount;
+    private int cameraUiGeneration;
     private string cameraResultText = "";
     private void UpdateCameraControls()
     {
         var state = receiver.CameraControls();
-        if (state.SessionId != cameraUiSession || state.Generation != cameraUiGeneration || state.Capabilities.Count != cameraUiCount)
+        if (state.SessionId != cameraUiSession || state.Generation != cameraUiGeneration ||
+            state.Capabilities.Count != cameraEditors.Count || state.Capabilities.Any(pair =>
+                !cameraEditors.TryGetValue(pair.Key, out var editor) || editor.Capability != pair.Value))
         {
-            cameraUiSession = state.SessionId; cameraUiGeneration = state.Generation; cameraUiCount = state.Capabilities.Count;
+            cameraUiSession = state.SessionId; cameraUiGeneration = state.Generation;
             cameraEditors.Clear(); CameraControlRows.Children.Clear(); cameraResultText = "";
             foreach (var capability in state.Capabilities.Values)
             {
@@ -62,18 +64,26 @@ public sealed partial class MainWindow
                         AutomationProperties.SetName(slider, capability.Label); row.Children.Add(slider);
                     }
                     var apply = new Button { Content = $"Apply {capability.Label}" };
+                    var session = state.SessionId;
+                    var generation = state.Generation;
                     apply.Click += async (_, _) =>
                     {
-                        if (!cameraEditors.TryGetValue(capability.Key, out var editor)) return;
+                        if (cameraUiSession != session || cameraUiGeneration != generation ||
+                            !cameraEditors.TryGetValue(capability.Key, out var editor) || editor.Capability != capability) return;
                         var value = editor.Slider?.Value ?? (editor.Choice?.SelectedItem is ComboBoxItem item ? Convert.ToDouble(item.Tag) : double.NaN);
                         apply.IsEnabled = false; CameraControlStatus.Text = $"Applying {capability.Label}…";
                         try {
                             var result = await receiver.SetCameraControlAsync(capability.Key, value, stop.Token);
                             if (closing) return;
+                            if (cameraUiSession != session || cameraUiGeneration != generation ||
+                                cameraEditors.GetValueOrDefault(capability.Key) != editor) return;
                             cameraResultText = result.Error ?? $"{capability.Label} applied: {result.Applied:0.###} {capability.Unit}";
                             editor.Dirty = false;
                         }
-                        catch (Exception error) { cameraResultText = error.Message; }
+                        catch (Exception error) {
+                            if (cameraUiSession == session && cameraUiGeneration == generation)
+                                cameraResultText = error.Message;
+                        }
                         finally { apply.IsEnabled = true; }
                     };
                     row.Children.Add(apply);

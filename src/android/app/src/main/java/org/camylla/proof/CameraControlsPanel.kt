@@ -14,37 +14,68 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
     private data class Row(val option: CameraOption, val label: TextView, val button: Button?, val slider: SeekBar?, var dragging: Boolean = false)
     private val rows = mutableListOf<Row>()
     private var generation = -1
+    private var descriptors: List<CameraOption> = emptyList()
+    private val quickButtons = mutableMapOf<String, Button>()
+    private var zoomAdjustment: View? = null
+    var onQuickAdjustmentOpen: (() -> Unit)? = null
+    fun closeQuickAdjustment() { zoomAdjustment?.visibility = GONE }
     private val state = TextView(context).apply { textSize = 16f; setPadding(8, 12, 8, 12) }
     private val quick = LinearLayout(context).apply { orientation = VERTICAL }
-    private val pro = LinearLayout(context).apply { orientation = VERTICAL; visibility = GONE }
+    private val pro = LinearLayout(context).apply { orientation = VERTICAL }
+    val advancedView: View get() = pro
     private val handler = Handler(Looper.getMainLooper())
     private val scheduled = mutableMapOf<String, Runnable>()
     init {
         orientation = VERTICAL; addView(state)
         addView(quick)
-        addView(Button(context).apply { text = "Pro camera controls"; setOnClickListener { pro.visibility = if (pro.visibility == VISIBLE) GONE else VISIBLE } })
-        addView(pro)
     }
     fun update(status: CameraStatus) {
-        state.text = "Focus: ${status.focus}\n${status.message}"
-        if (status.generation != generation) {
+        state.text = if (status.options.isEmpty()) "Start to apply camera controls" else "Focus: ${status.focus}" +
+            if (status.message.isNotEmpty() && !status.message.endsWith("applied")) "\n${status.message}" else ""
+        state.visibility = if (status.options.isNotEmpty() && status.message.isNotEmpty() && !status.message.endsWith("applied")) VISIBLE else GONE
+        // Binding publishes a generation before its descriptors arrive. Runtime validation
+        // can also change availability within that generation.
+        if (status.generation != generation || status.options != descriptors) {
             generation = status.generation
+            descriptors = status.options.toList()
             for (task in scheduled.values) handler.removeCallbacks(task)
-            scheduled.clear(); rows.clear(); quick.removeAllViews(); pro.removeAllViews()
+            scheduled.clear(); rows.clear(); quickButtons.clear(); quick.removeAllViews(); pro.removeAllViews()
             val options = status.options.associateBy { it.key }
             val actions = LinearLayout(context).apply { orientation = HORIZONTAL }
             fun action(label: String, key: String, value: () -> Double) {
                 actions.addView(Button(context).apply {
-                    text = label; contentDescription = label; isEnabled = options[key]?.reason == null && options.containsKey(key)
+                    text = label; isAllCaps = false; textSize = 14f; contentDescription = label; isEnabled = options[key]?.reason == null && options.containsKey(key)
+                    minimumHeight = (48 * resources.displayMetrics.density).toInt()
+                    val inset = (4 * resources.displayMetrics.density).toInt()
+                    setPadding(inset, paddingTop, inset, paddingBottom)
                     setOnClickListener { service()?.control(key, value()) }
+                    quickButtons[key] = this
                 }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
             }
-            action("Focus Auto", "focusMode") { options["focusMode"]?.choices?.keys?.firstOrNull { it != 0 }?.toDouble() ?: 0.0 }
+            action("Focus Auto", "focusMode") { CameraQuickControls.autoMode(options["focusMode"]?.choices.orEmpty())?.toDouble() ?: 0.0 }
             action("Focus lock", "focusLock") { if (service()?.cameraStatus?.applied?.get("focusLock") == 1.0) 0.0 else 1.0 }
-            action("Light", "torch") { if (service()?.cameraStatus?.applied?.get("torch") == 1.0) 0.0 else 1.0 }
+            action("Torch", "torch") { if (service()?.cameraStatus?.applied?.get("torch") == 1.0) 0.0 else 1.0 }
             quick.addView(actions)
-            quick.addView(Button(context).apply { text = "Focus centre"; isEnabled = options["focusPoint"]?.reason == null && options.containsKey("focusPoint"); setOnClickListener { service()?.control("focusPoint",1.0) } })
-            options["zoom"]?.let { row(quick, it) }
+            val focusCentre = Button(context).apply { text = "Focus centre"; isAllCaps = false; textSize = 14f; setOnClickListener { service()?.control("focusPoint",1.0) } }
+            quickButtons["focusPoint"] = focusCentre
+            // Keep the gesture alternative beside the zoom, rather than adding another full row.
+            val zoomRow = LinearLayout(context).apply { orientation = HORIZONTAL }
+            val zoomControls = LinearLayout(context).apply { orientation = VERTICAL; visibility = GONE }
+            zoomAdjustment = zoomControls
+            options["zoom"]?.let { row(zoomControls, it) }
+            val zoomButton = Button(context).apply {
+                isAllCaps = false; textSize = 14f
+                setOnClickListener {
+                    val open = zoomControls.visibility != VISIBLE
+                    if (open) onQuickAdjustmentOpen?.invoke()
+                    zoomControls.visibility = if (open) VISIBLE else GONE
+                }
+            }
+            quickButtons["zoom"] = zoomButton
+            zoomRow.addView(zoomButton, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            zoomRow.addView(focusCentre, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            quick.addView(zoomRow)
+            quick.addView(zoomControls)
             val groups = linkedMapOf(
                 "Focus" to listOf("focusMode", "focusDistance", "focusLock"),
                 "Exposure and light" to listOf("torch", "torchStrength", "exposureMode", "ev", "aeLock", "iso", "shutter", "antiFlicker"),
@@ -64,17 +95,31 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
             pro.addView(Button(context).apply { text = "Save preset"; setOnClickListener {
                 val input = EditText(context).apply { hint = "Preset name"; maxLines = 1 }
                 AlertDialog.Builder(context).setTitle("Save camera preset").setView(input).setPositiveButton("Save") { _, _ ->
-                    runCatching { service()?.savePreset(input.text.toString()) }.onFailure { state.text = it.message }
+                    runCatching { service()?.savePreset(input.text.toString()) }.onFailure {
+                        Toast.makeText(context, it.message ?: "Could not save preset", Toast.LENGTH_LONG).show()
+                    }
                 }.setNegativeButton("Cancel", null).show()
             } })
             pro.addView(Button(context).apply { text = "Load or delete preset"; setOnClickListener {
                 val names = CameraSettings(context).presets().keys.toTypedArray()
-                if (names.isEmpty()) { state.text = "No saved presets"; return@setOnClickListener }
+                if (names.isEmpty()) { Toast.makeText(context, "No saved presets", Toast.LENGTH_LONG).show(); return@setOnClickListener }
                 AlertDialog.Builder(context).setTitle("Camera presets").setItems(names) { _, index ->
                     AlertDialog.Builder(context).setTitle(names[index]).setPositiveButton("Load") { _, _ -> service()?.applyPreset(names[index]) }
                         .setNeutralButton("Delete") { _, _ -> CameraSettings(context).deletePreset(names[index]) }.setNegativeButton("Cancel", null).show()
                 }.show()
             } })
+        }
+        val availability = mutableListOf<String>()
+        for ((key, button) in quickButtons) {
+            val presentation = CameraQuickControls.present(key, status)
+            button.text = presentation.label
+            button.isEnabled = presentation.enabled
+            button.contentDescription = presentation.label + (presentation.reason?.let { ". $it" } ?: "")
+            presentation.reason?.let { availability.add(it) }
+        }
+        if (availability.isNotEmpty()) {
+            state.text = "${state.text}\n${availability.distinct().joinToString(" · ")}"
+            state.visibility = VISIBLE
         }
         for (row in rows) {
             val o = row.option; val value = status.applied[o.key]
@@ -83,6 +128,7 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                 else o.choices[it.toInt()] ?: String.format(Locale.US, "%.3f %s", it, o.unit)
             } ?: "Awaiting camera"
             row.label.text = "${o.label}: $display${if (o.key in status.pending) " · Applying" else ""}${o.reason?.let { "\nUnavailable: $it" } ?: ""}"
+            row.button?.isEnabled = o.key !in status.pending && o.reason == null
             if (value != null && row.slider != null && !row.dragging && o.max > o.min && o.key !in status.pending)
                 row.slider.progress = ((value - o.min) / (o.max - o.min) * 1000).toInt().coerceIn(0,1000)
         }
@@ -93,8 +139,11 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
         if (option.choices.isNotEmpty()) {
             val button = Button(context).apply { text = "Choose ${option.label}"; setOnClickListener {
                 val keys = option.choices.keys.toList()
+                val token = generation
                 AlertDialog.Builder(context).setTitle(option.label).setItems(keys.map { option.choices.getValue(it) }.toTypedArray()) { _, i ->
-                    service()?.control(option.key, keys[i].toDouble())
+                    if (service()?.cameraStatus?.generation == token)
+                        service()?.control(option.key, keys[i].toDouble())
+                    else Toast.makeText(context, "Camera changed. Choose the setting again.", Toast.LENGTH_LONG).show()
                 }.setNegativeButton("Cancel", null).show()
             } }
             parent.addView(button); rows.add(Row(option, label, button, null)); return
@@ -110,7 +159,11 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                 val value = option.min + progress / 1000.0 * (option.max - option.min)
                 val stepped = if (option.step == 1.0) kotlin.math.round(value) else value
                 val token = generation
-                val task = Runnable { scheduled.remove(option.key); if (token == generation) service()?.control(option.key, stepped) }
+                val task = Runnable {
+                    scheduled.remove(option.key)
+                    if (token == generation && service()?.cameraStatus?.generation == token)
+                        service()?.control(option.key, stepped)
+                }
                 scheduled[option.key] = task; handler.postDelayed(task, 100)
             }
         })
