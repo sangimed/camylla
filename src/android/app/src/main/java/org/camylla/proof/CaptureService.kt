@@ -115,7 +115,10 @@ class CaptureService : LifecycleService() {
             done(actual, error)
         } } ?: done(null, "Capture stopped")
     }
-    internal fun tapFocus(x: Double, y: Double, width: Int, height: Int) { engine?.tap(x, y, width, height) }
+    internal fun tapFocus(x: Double, y: Double, width: Int, height: Int, done: (String?) -> Unit = {}) {
+        engine?.tap(x, y, width, height) { _, error -> main.post { done(error) } } ?: done("Camera not ready")
+    }
+    internal fun clearFocusFeedback() { engine?.clearFocusFeedback() }
     internal fun attachPreview(surface: Surface?, width: Int, height: Int) { previewSurface = surface; previewWidth = width; previewHeight = height; engine?.attachPreview(surface, width, height) }
     internal fun displayRotation(degrees: Int) { displayDegrees = degrees; engine?.displayRotation(degrees) }
     internal fun resetSettings() { val current = entry ?: return; settings.reset(current.id, mode.name); bindCamera(emptyMap()) }
