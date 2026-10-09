@@ -13,6 +13,8 @@ Detailed, executable work belongs in [GitHub Issues](https://github.com/sangimed
 
 M1 established the Windows Media Foundation virtual-camera path, M2 validated physical S21 Ultra CameraX/MediaCodec capture, and M3 validated authenticated H.264 transport to continuous Windows NV12 decoding at approximately 30 FPS. Receiver restart and phone Wi-Fi interruption recovered, with bounded queues. M4 now builds the focused desktop preview, pairing, controls, settings, and virtual-camera integration from those seams. Exact end-to-end latency and broad compatibility remain later measured gates.
 
+Product refinement priorities: [#59 — mobile UI/UX redesign](https://github.com/sangimed/camylla/issues/59) and [#61 — responsive Windows UI/UX redesign](https://github.com/sangimed/camylla/issues/61). The tap-to-focus feedback enhancement [#60](https://github.com/sangimed/camylla/issues/60) is tested, user-accepted and merged in PR #62. Additional validation and release preparation remain tracked below.
+
 ## Milestones
 
 ### M0 — Design baseline
@@ -54,8 +56,8 @@ The M1 evidence is recorded in [`docs/validation/windows-virtual-camera-m1.md`](
 - [x] Manually exercise camera switching and baseline controls.
 - [x] Manually validate app switching, foreground-service lifecycle, and screen-off behavior.
 - [x] Measure about 29.9 encoded FPS at rear 720p30 on the primary physical phone.
-- [ ] Record detailed thermal and battery measurements in a longer follow-up run.
-- [ ] Record optional 60 FPS results without making them a release blocker.
+- [ ] Record additional thermal and battery measurements through focused checks: [#46](https://github.com/sangimed/camylla/issues/46).
+- [ ] Record optional 60 FPS results and 30 FPS fallback, without making them a release blocker: [#47](https://github.com/sangimed/camylla/issues/47).
 
 The physical evidence and limits of this feasibility result are preserved in [the S21 Ultra validation record](docs/validation/android-m2-s21-ultra.md). Tracking: [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13).
 
@@ -84,35 +86,37 @@ Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues
 
 - [x] Build the focused Windows setup and preview experience.
 - [x] Add camera/mode controls and persistent settings. Implementation and user acceptance on the Xiaomi/Windows/OBS configuration are merged; see [#26](https://github.com/sangimed/camylla/issues/26).
-- [x] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets. PR #44 is merged and tested; the user confirmed natural phone/Windows/OBS proportions and working controls on the final APK. See [camera validation](docs/validation/camera-pr44-retest-2026-10-09.md) and [UX scope](docs/camera-controls-ux.md).
+- [x] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets. PR #44 is merged and tested; the user confirmed natural phone/Windows/OBS proportions and working controls on the final APK. See [camera validation](docs/validation/camera-pr44-retest-2026-10-09.md) and [UX scope](docs/camera-controls-ux.md); additional hardware coverage remains in [#48](https://github.com/sangimed/camylla/issues/48).
 - [x] Add pairing and repeat-use workflows.
-- [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37. PR #41 adds tested recovery diagnostics and user-confirmed Xiaomi/OBS live output, source reopen, neutral outage output and automatic recovery; additional Android/OBS edge-case evidence remains tracked in [#38](https://github.com/sangimed/camylla/issues/38).
+- [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37. PR #41 adds tested recovery diagnostics and user-confirmed Xiaomi/OBS live output, source reopen, neutral outage output and automatic recovery.
 - [x] Implement delivered-quality reporting and bounded network/severe-thermal bitrate adaptation. M4.7 merged in PR #39; automated checks pass, and Xiaomi 720p30/Wi-Fi recovery evidence is recorded in [the M4.7 validation record](docs/validation/android-windows-m4-7.md).
 - [ ] Complete M4.7 physical quality validation on a representative Android phone: healthy 720p30/1080p30, observe effective bitrate reduction under controlled network pressure, and record a safely observable thermal case. The Xiaomi run confirmed recovery but did not observe the bitrate reduction; thermal remains untested. Tracking: [#40](https://github.com/sangimed/camylla/issues/40).
 - [x] Ensure disconnected output is neutral rather than stale.
+- [x] Add mobile preview-only tap-to-focus target and actual acquisition feedback. PR #62 is merged, Android/Windows CI and focused tests pass, and the user accepted the Xiaomi/Windows result. See [validation and acceptance](docs/validation/tap-focus-feedback-2026-10-09.md); additional physical scenarios are not inferred from that acceptance.
+
+Additional physical acceptance remains tracked in [#38 — recovery UI matrix](https://github.com/sangimed/camylla/issues/38) and [#40 — quality/adaptation](https://github.com/sangimed/camylla/issues/40). The low-priority full Android reboot/trust check is [#34](https://github.com/sangimed/camylla/issues/34). These are validation follow-ups, not reported product bugs.
 
 ### M5 — Wider alpha / beta
 
 **Status:** planned
 
-- [ ] Add a second Android phone to the compatibility matrix.
-- [ ] Add a Windows integrated-GPU test configuration.
+- [ ] Add a second Android device to the compatibility matrix: [#48](https://github.com/sangimed/camylla/issues/48).
+- [ ] Add a Windows integrated-GPU test configuration: [#49](https://github.com/sangimed/camylla/issues/49).
 - [x] Improve transport/IPC diagnostics and record focused streaming, bounded-resource and OBS lifecycle/recovery evidence on the Xiaomi configuration. PR #41 is merged and tested; see [the recovery validation record](docs/validation/recovery-diagnostics-2026-10-08.md).
-- [ ] Diagnose the original spontaneous reconnects and complete the required recovery scenarios and timing measurements. The original event log contains more disruptions than the sampled states showed; the focused follow-up did not reproduce them. See [release gate results](docs/validation/v1-release-gates.md). OBS is the required release consumer; no minimum test duration applies.
-- [ ] Expand parser/security/state-machine testing and fuzzing where appropriate.
-- [ ] Audit bundled dependencies, runtimes, licenses, and notices.
-- [ ] Validate ordinary offline install, upgrade, uninstall, and cleanup.
-- [ ] Establish the release-signing path.
+- [ ] Expand parser/security/state-machine testing and fuzzing where appropriate: [#50](https://github.com/sangimed/camylla/issues/50).
+- [ ] Audit bundled dependencies, runtimes, licenses, and notices: [#51](https://github.com/sangimed/camylla/issues/51).
+- [ ] Prepare and validate ordinary offline install, upgrade, uninstall, and cleanup: [#52](https://github.com/sangimed/camylla/issues/52).
+- [ ] Establish the release-signing path: [#53](https://github.com/sangimed/camylla/issues/53).
 
 ### M6 — v1.0
 
 **Status:** planned
 
-- [ ] Pass all required 30 FPS release gates.
-- [ ] Produce signed Windows and Android release artifacts.
-- [ ] Publish checksums, notices, supported configurations, and known limitations.
-- [ ] Document reinstall/rollback and recovery procedures.
-- [ ] Record build provenance and release validation evidence.
+- [ ] Pass all required 30 FPS release gates: [#56 — baseline/OBS](https://github.com/sangimed/camylla/issues/56), [#54 — camera-to-OBS latency](https://github.com/sangimed/camylla/issues/54), [#55 — impairment/recovery](https://github.com/sangimed/camylla/issues/55), and distribution checks [#51–#53](https://github.com/sangimed/camylla/issues/51).
+- [ ] Produce signed Windows and Android release artifacts: [#53](https://github.com/sangimed/camylla/issues/53).
+- [ ] Publish checksums, notices, supported configurations, and known limitations: [#57](https://github.com/sangimed/camylla/issues/57).
+- [ ] Document reinstall/rollback and recovery procedures: [#58](https://github.com/sangimed/camylla/issues/58).
+- [ ] Record build provenance and release validation evidence: [#57](https://github.com/sangimed/camylla/issues/57).
 
 ## Deferred from v1
 
