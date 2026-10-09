@@ -99,5 +99,8 @@ starting capture. After another explicit phone Start, the user confirmed:
 confirmed for the final, non-diagnostic APK on this configuration.
 
 Private camera screenshots and unsanitized logs remain in ignored local build
-artifacts. Focus-target accuracy, the broader #26 physical controls matrix and
-review/merge remain outstanding; no roadmap milestone is marked complete.
+artifacts. Following final-APK proportions confirmation, the user also reported
+“tout marche, meme les controles :)”, accepting the camera controls on this
+configuration; see the [final acceptance record](camera-pr44-retest-2026-10-09.md).
+No new per-control measurements or wider device matrix are claimed. Review/merge
+is handled separately; roadmap items may only be completed after merger.

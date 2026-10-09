@@ -4,8 +4,9 @@ Tracking: [PR #44](https://github.com/sangimed/camylla/pull/44),
 [#26](https://github.com/sangimed/camylla/issues/26) and
 [#43](https://github.com/sangimed/camylla/issues/43).
 Tested implementation: `ae69c12b16a2d054e9a39b5343c3bf87d2995fa4`.
-The PR remains a draft; this automated retest does not complete physical
-acceptance or a roadmap milestone.
+This automated retest alone does not complete physical acceptance or a roadmap
+milestone. Later user acceptance is recorded below; roadmap completion requires
+the tested implementation to be merged into main.
 
 ## Results
 
@@ -57,3 +58,12 @@ That black symptom's cause remains unproven; the later final-APK check passed.
 Physical focus/torch and the complete #26 controls matrix remain pending.
 GitHub CI also passed on `521f8c6` after this retest record was published
 ([run](https://github.com/sangimed/camylla/actions/runs/37986168307)).
+
+## Final user acceptance
+
+After confirming image/proportions on the final non-diagnostic APK, the user
+reported: “tout marche, meme les controles :)”. This records the user's acceptance
+of the camera UI and controls on the Xiaomi/Windows/OBS configuration. It
+supersedes the pending user-acceptance status above. No new control-by-control
+measurements, unsupported-lens observations, second-device results or reboot
+checks were collected, and no wider compatibility claim is made.
