@@ -2,7 +2,8 @@
 
 Tracking: [#43](https://github.com/sangimed/camylla/issues/43), created before
 implementation. The user reports deformation predating the current #26 mobile
-UX changes. This is a fix checkpoint, not a merged milestone or physical PASS.
+UX changes. This is an unmerged fix checkpoint. The later physical proportions
+confirmation is recorded below; it does not complete the #26 hardware matrix.
 The user confirmed that deformation is visible in the phone, Windows and OBS.
 All existing local edits, including ROADMAP.md and the #26 work, were retained.
 
@@ -22,7 +23,8 @@ The connected Xiaomi's existing user-started capture reported camera 0,
 1280×720, sensor orientation 90°, sensor crop 3264×2448 and rotate-and-crop NONE.
 NONE does not remove the buffer producer's separate orientation transform.
 The actual old producer matrix was not captured from the running process;
-physical confirmation of this fix against the reported scene remains pending.
+The later physical run captured the producer transform and confirmed natural
+proportions, as recorded below.
 
 CameraTextureTransform now removes producer quarter-turn/mirror presentation
 while retaining the texture crop/filtering inset and canonical GL Y flip.
@@ -57,7 +59,7 @@ possibility if distortion survives the corrected clean output.
 - No reconnection, endurance or general diagnostic campaign was added. No
   roadmap item was marked complete.
 
-## Remaining physical confirmation
+## Initial physical-check plan
 
 On resuming work on 2026-10-09, the user confirmed that this physical check
 has not yet been performed. Local review confirmed 45 JVM tests with zero
@@ -69,3 +71,33 @@ Check a tap still targets the intended point, then Stop. If only OBS remains
 distorted, compare its source transform with the Windows preview before changing
 the camera pipeline. The issue remains open until that visual confirmation and
 review/merge are complete.
+
+## Physical proportions confirmed on the final APK
+
+During the 2026-10-09 follow-up, the user explicitly pressed Start on the phone.
+The newly built Windows desktop was running; OBS 32.2.2 opened the existing
+Camylla source at NV12 1920×1080 / 30 FPS while the phone sent 1280×720 / 30 FPS.
+OBS's previous-unclean-shutdown dialogue was dismissed with Run in Normal Mode;
+no recording or broadcast was started.
+
+The user initially reported black phone and Windows previews with an uncovered
+lens facing an illuminated scene. Camera frames and decoded frames were flowing,
+and no rendering exception was recorded. A temporary diagnostic APK compared
+the original producer transform with its canonical form. The actual Xiaomi
+producer was `[0,-1,0,0,-1,0,0,0,0,0,1,0,1,1,0,1]`, confirming a quarter-turn.
+First-frame mean luminance was approximately 0.565 / 0.562 out of 255 for
+original/canonical sampling: both were nearly black. This does not establish
+the cause of the initial black output or prove a repair for that symptom.
+
+The user subsequently reported that the image was visible and confirmed natural
+proportions on phone portrait/landscape, Windows and OBS. The temporary diagnostic
+was then removed in full; the renderer source matches the PR implementation.
+Android unit tests and debug builds passed again, and all seven CameraProductTest
+tests passed on the Xiaomi. The final APK was installed and reopened without
+starting capture. After another explicit phone Start, the user confirmed:
+“Oui, image et proportions correctes partout”. Thus proportions are physically
+confirmed for the final, non-diagnostic APK on this configuration.
+
+Private camera screenshots and unsanitized logs remain in ignored local build
+artifacts. Focus-target accuracy, the broader #26 physical controls matrix and
+review/merge remain outstanding; no roadmap milestone is marked complete.

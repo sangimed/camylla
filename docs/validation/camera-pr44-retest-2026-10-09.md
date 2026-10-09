@@ -44,3 +44,16 @@ and torch, and synchronized local/remote control acceptance remain pending.
 No OBS physical PASS is claimed from synthetic rendering tests. See the
 [aspect-ratio record](camera-aspect-ratio-2026-10-09.md) and
 [mobile UX record](camera-mobile-ux-2026-10-08.md) for the focused user checks.
+
+## Later physical follow-up
+
+The user subsequently started capture explicitly and confirmed correct image
+proportions on phone portrait/landscape, Windows and OBS. After removing all
+temporary texture diagnostics, rebuilding, passing all seven device tests and
+installing the final APK, the user pressed Start again and reconfirmed correct
+image and proportions in all three views. See the updated aspect-ratio record
+for the actual producer matrix and the preserved initial black-preview report.
+That black symptom's cause remains unproven; the later final-APK check passed.
+Physical focus/torch and the complete #26 controls matrix remain pending.
+GitHub CI also passed on `521f8c6` after this retest record was published
+([run](https://github.com/sangimed/camylla/actions/runs/37986168307)).
