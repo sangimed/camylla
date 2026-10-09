@@ -21,8 +21,9 @@ import java.util.concurrent.atomic.AtomicReference
 /** Device tests inspect characteristics and synthesize GPU input. They never open a camera. */
 @RunWith(AndroidJUnit4::class)
 class CameraProductTest {
-    @Test fun mobileDrawersKeepCaptureActionsVisibleAndOpenOnlyOnePanel() {
+    @Test fun mobileNavigationKeepsCaptureActionsVisibleAndSeparatesInfrequentWork() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.targetContext.getSharedPreferences("mobile-ui", Context.MODE_PRIVATE).edit().clear().commit()
         val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         instrumentation.waitForIdleSync()
@@ -34,7 +35,8 @@ class CameraProductTest {
             instrumentation.runOnMainSync {
                 fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
                     .single { it.text.toString().equals(text, ignoreCase = true) }
-                val advanced = button("Advanced")
+                button("Simple").performClick()
+                val advanced = button("Pro controls")
                 advanced.performClick()
                 val preset = button("Save preset")
                 assertTrue(preset.isShown)
@@ -46,11 +48,11 @@ class CameraProductTest {
                 for (label in listOf("Start camera", "Stop camera"))
                     assertTrue("$label hidden by advanced drawer", button(label).getGlobalVisibleRect(android.graphics.Rect()))
                 val preset = button("Save preset")
-                button("Setup").performClick()
-                val scan = button("Scan PC QR")
+                button("Connections").performClick()
+                val scan = button("Connect a PC · Scan QR")
                 assertTrue(scan.isShown)
                 assertFalse(preset.isShown)
-                button("Setup").performClick()
+                button("Camera").performClick()
                 assertFalse(scan.isShown)
             }
             instrumentation.waitForIdleSync()
@@ -61,7 +63,10 @@ class CameraProductTest {
                     assertTrue("$label not visible", action.getGlobalVisibleRect(android.graphics.Rect()))
                 }
             }
-        } finally { instrumentation.runOnMainSync { activity.finish() } }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+            instrumentation.targetContext.getSharedPreferences("mobile-ui", Context.MODE_PRIVATE).edit().clear().commit()
+        }
     }
 
     @Test fun mobileControlsAcceptLateDescriptorsAndRuntimeUnavailability() {

@@ -133,7 +133,7 @@ class PairingHardwareTest {
                 val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
                 for (index in 0 until content.childCount) visit(content.getChildAt(index))
                 val labels = visible.filterIsInstance<android.widget.TextView>().map { it.text.toString() }
-                assertTrue("Scanner title missing: $labels", labels.contains("Scan the PC QR"))
+                assertTrue("Scanner title missing: $labels", labels.contains("Connect a PC"))
                 assertTrue(visible.none { it is android.widget.EditText })
                 assertTrue(labels.none { it.contains("Approve") || it.contains("Finish") || it.contains("Review") || it == "Pair using invitation" })
             }

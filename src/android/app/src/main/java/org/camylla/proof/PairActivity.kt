@@ -34,29 +34,31 @@ class PairActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
-        layout.addView(TextView(this).apply { text = "Scan the PC QR"; textSize = 26f })
-        layout.addView(TextView(this).apply { text = "Pairing is automatic. Capture stays stopped." })
+        val inset = MobileUi.dp(this, 20)
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(inset, inset, inset, inset); setBackgroundColor(MobileUi.BACKGROUND) }
+        layout.addView(TextView(this).apply { text = "Connect a PC"; MobileUi.text(this, 26f) })
+        layout.addView(TextView(this).apply { text = "Scan the pairing QR shown by Camylla on your PC. Capture remains stopped until you choose Start."; setPadding(0, 0, 0, inset); MobileUi.text(this, 16f, true) })
         preview = PreviewView(this)
         layout.addView(preview, LinearLayout.LayoutParams(-1, 0, 1f))
-        scan = Button(this).apply { text = "Scan again"; visibility = android.view.View.GONE; setOnClickListener { scanWithPermission() } }
+        scan = Button(this).apply { text = "Scan again"; MobileUi.button(this); visibility = android.view.View.GONE; setOnClickListener { scanWithPermission() } }
         layout.addView(scan)
         invitation = EditText(this).apply {
             hint = "Or paste the invitation shown by your PC"
             setSingleLine(true)
             filters = arrayOf(android.text.InputFilter.LengthFilter(512))
+            MobileUi.input(this)
         }
         val manual = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE }
         manual.addView(invitation)
-        address = EditText(this).apply { hint = "Optional LAN address override"; setSingleLine(true) }
+        address = EditText(this).apply { hint = "Optional LAN address override"; setSingleLine(true); MobileUi.input(this) }
         manual.addView(address)
-        status = TextView(this).apply { textSize = 16f }
+        status = TextView(this).apply { setPadding(0, inset / 2, 0, inset / 2); MobileUi.text(this, 16f, true) }
         layout.addView(status)
-        begin = Button(this).apply { text = "Pair using invitation"; setOnClickListener { beginPair() } }
+        begin = Button(this).apply { text = "Pair using invitation"; MobileUi.button(this, prominent = true); setOnClickListener { beginPair() } }
         manual.addView(begin)
         layout.addView(manual)
         layout.addView(Button(this).apply {
-            text = "Can't scan?"
+            text = "Can't scan?"; MobileUi.button(this)
             setOnClickListener {
                 provider?.unbindAll()
                 manual.visibility = android.view.View.VISIBLE
@@ -64,7 +66,7 @@ class PairActivity : ComponentActivity() {
                 visibility = android.view.View.GONE
             }
         })
-        layout.addView(Button(this).apply { text = "Back"; setOnClickListener { finish() } })
+        layout.addView(Button(this).apply { text = "Back"; MobileUi.button(this); setOnClickListener { finish() } })
         setContentView(layout)
         scanWithPermission()
     }

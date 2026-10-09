@@ -25,11 +25,21 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
     val advancedView: View get() = pro
     private val handler = Handler(Looper.getMainLooper())
     private val scheduled = mutableMapOf<String, Runnable>()
+    private var simpleMode = true
+    private var latestStatus = CameraStatus()
     init {
         orientation = VERTICAL; addView(state)
         addView(quick)
     }
+    /** Simple mode leaves focus to the direct preview gesture and exposes only zoom and torch. */
+    fun setSimpleMode(value: Boolean) {
+        if (simpleMode == value) return
+        simpleMode = value
+        generation = -1
+        update(latestStatus)
+    }
     fun update(status: CameraStatus) {
+        latestStatus = status
         state.text = if (status.options.isEmpty()) "Start to apply camera controls" else "Focus: ${status.focus}" +
             if (status.message.isNotEmpty() && !status.message.endsWith("applied")) "\n${status.message}" else ""
         state.visibility = if (status.options.isNotEmpty() && status.message.isNotEmpty() && !status.message.endsWith("applied")) VISIBLE else GONE
@@ -52,8 +62,10 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                     quickButtons[key] = this
                 }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
             }
-            action("Focus Auto", "focusMode") { CameraQuickControls.autoMode(options["focusMode"]?.choices.orEmpty())?.toDouble() ?: 0.0 }
-            action("Focus lock", "focusLock") { if (service()?.cameraStatus?.applied?.get("focusLock") == 1.0) 0.0 else 1.0 }
+            if (!simpleMode) {
+                action("Focus Auto", "focusMode") { CameraQuickControls.autoMode(options["focusMode"]?.choices.orEmpty())?.toDouble() ?: 0.0 }
+                action("Focus lock", "focusLock") { if (service()?.cameraStatus?.applied?.get("focusLock") == 1.0) 0.0 else 1.0 }
+            }
             action("Torch", "torch") { if (service()?.cameraStatus?.applied?.get("torch") == 1.0) 0.0 else 1.0 }
             quick.addView(actions)
             val focusCentre = Button(context).apply { text = "Focus centre"; isAllCaps = false; textSize = 14f; setOnClickListener { service()?.control("focusPoint",1.0) } }
@@ -72,8 +84,8 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                 }
             }
             quickButtons["zoom"] = zoomButton
-            zoomRow.addView(zoomButton, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-            zoomRow.addView(focusCentre, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            zoomRow.addView(zoomButton, LayoutParams(0, LayoutParams.WRAP_CONTENT, if (simpleMode) 1f else .5f))
+            if (!simpleMode) zoomRow.addView(focusCentre, LayoutParams(0, LayoutParams.WRAP_CONTENT, .5f))
             quick.addView(zoomRow)
             quick.addView(zoomControls)
             val groups = linkedMapOf(
