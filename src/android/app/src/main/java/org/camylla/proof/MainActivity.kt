@@ -100,25 +100,29 @@ class MainActivity : Activity() {
                 android.widget.Toast.makeText(this, "Connection setup has changed. Scan your PC's QR to pair again.", android.widget.Toast.LENGTH_LONG).show()
             upgrade.edit().putBoolean("upgrade_explained", true).apply()
         }
-        fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
+        fun dp(value: Int) = MobileUi.dp(this, value)
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(16)) }
+        val connections = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(16)) }
         fun button(parent: LinearLayout, label: String, action: () -> Unit): Button {
             val value = Button(this).apply {
                 text = label; isAllCaps = false; textSize = 14f
-                setPadding(dp(4), paddingTop, dp(4), paddingBottom)
+                MobileUi.button(this)
                 setOnClickListener { action() }
             }
             parent.addView(value); return value
         }
-        connectionStatus = TextView(this).apply { textSize = 16f; setPadding(dp(12), dp(4), dp(12), dp(4)) }
-        button(layout, "Scan PC QR") {
+        connectionStatus = TextView(this).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); MobileUi.text(this, 15f, true) }
+        connections.addView(TextView(this).apply { text = "Connections"; MobileUi.text(this, 24f) })
+        connections.addView(TextView(this).apply { text = "Pair a PC to start your camera stream."; MobileUi.text(this, 15f, true) })
+        button(connections, "Connect a PC · Scan QR") {
             if (service?.stats()?.state?.let { it != "Stopped" } == true) showNotice("Stop capture before pairing.")
             else startActivity(Intent(this, PairActivity::class.java))
         }
         trustControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         desktops = Spinner(this)
         trustControls.addView(desktops)
-        layout.addView(trustControls)
+        connections.addView(trustControls)
+        val connectionManagement = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val selections = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         lensChoice = button(selections, "Camera") {
@@ -160,7 +164,7 @@ class MainActivity : Activity() {
         }
         for (i in 0 until selections.childCount) selections.getChildAt(i).layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         cameraPanel = CameraControlsPanel(this) { service }
-        button(settings, "Forget this PC") {
+        button(connectionManagement, "Forget this PC") {
             val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition)
             if (peer != null) android.app.AlertDialog.Builder(this).setTitle("Forget ${peer.name}?")
                 .setMessage("Capture will stop. Scan its QR to connect again.")
@@ -187,9 +191,14 @@ class MainActivity : Activity() {
             else showNotice("No key change is pending.")
         }
         resumeKeyChange.visibility = android.view.View.GONE
+        connections.addView(connectionManagement)
+        layout.addView(TextView(this).apply { text = "Settings & security"; MobileUi.text(this, 24f) })
+        layout.addView(TextView(this).apply { text = "Manage security keys and inspect connection diagnostics."; MobileUi.text(this, 15f, true) })
         layout.addView(settings)
-        stats = TextView(this).apply { textSize = 14f }
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        stats = TextView(this).apply { setPadding(dp(12), dp(12), dp(12), dp(12)); MobileUi.text(this, 14f, true) }
+        layout.addView(TextView(this).apply { text = "Diagnostics"; MobileUi.text(this, 20f) })
+        layout.addView(stats)
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(MobileUi.BACKGROUND) }
         root.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
@@ -200,6 +209,21 @@ class MainActivity : Activity() {
             }
             insets
         }
+        val header = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(4)) }
+        val titleRow = LinearLayout(this).apply { gravity = android.view.Gravity.CENTER_VERTICAL }
+        titleRow.addView(TextView(this@MainActivity).apply { text = "CAMYLLA"; letterSpacing = .12f; MobileUi.text(this, 20f) }, LinearLayout.LayoutParams(0, -2, 1f))
+        val proPreference = getSharedPreferences("mobile-ui", Context.MODE_PRIVATE)
+        var proMode = proPreference.getBoolean("pro_mode", false)
+        val proToggle = Button(this).apply { MobileUi.button(this); minHeight = dp(40) }
+        titleRow.addView(proToggle)
+        header.addView(titleRow)
+        val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val cameraNav = Button(this).apply { text = "Camera"; MobileUi.button(this) }
+        val connectionsNav = Button(this).apply { text = "Connections"; MobileUi.button(this) }
+        val settingsNav = Button(this).apply { text = "Settings"; MobileUi.button(this) }
+        listOf(cameraNav, connectionsNav, settingsNav).forEach { navigation.addView(it, LinearLayout.LayoutParams(0, -2, 1f)) }
+        header.addView(navigation)
+        root.addView(header)
         root.addView(connectionStatus)
         val body = LinearLayout(this).apply {
             orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
@@ -283,9 +307,7 @@ class MainActivity : Activity() {
             }
             toggle.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         }
-        tab("Advanced", cameraPanel.advancedView)
-        tab("Setup", layout)
-        tab("Diagnostics", stats)
+        tab("Pro controls", cameraPanel.advancedView)
         controls.addView(drawerTabs)
         controls.addView(drawer, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.22f).toInt()))
         if (body.orientation == LinearLayout.HORIZONTAL) {
@@ -296,14 +318,46 @@ class MainActivity : Activity() {
             body.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f))
             body.addView(controls, LinearLayout.LayoutParams(-1, -2))
         }
-        root.addView(body, LinearLayout.LayoutParams(-1,0,1f))
+        val cameraPage = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        cameraPage.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        startButton = Button(this).apply { text = "Start camera"; setOnClickListener { startWithPermission() } }
-        stopButton = Button(this).apply { text = "Stop camera"; setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
-        retryConnection = Button(this).apply { text = "Retry now"; setOnClickListener { service?.retryConnection() } }
+        startButton = Button(this).apply { text = "Start camera"; MobileUi.button(this, prominent = true); setOnClickListener { startWithPermission() } }
+        stopButton = Button(this).apply { text = "Stop camera"; MobileUi.button(this, destructive = true); setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
+        retryConnection = Button(this).apply { text = "Retry now"; MobileUi.button(this); setOnClickListener { service?.retryConnection() } }
         actions.addView(startButton, LinearLayout.LayoutParams(0,-2,1f))
         actions.addView(retryConnection, LinearLayout.LayoutParams(0,-2,1f))
-        actions.addView(stopButton, LinearLayout.LayoutParams(0,-2,1f)); root.addView(actions)
+        actions.addView(stopButton, LinearLayout.LayoutParams(0,-2,1f)); cameraPage.addView(actions)
+        val pages = FrameLayout(this)
+        val connectionsPage = ScrollView(this).apply { addView(connections); visibility = View.GONE }
+        val settingsPage = ScrollView(this).apply { addView(layout); visibility = View.GONE }
+        pages.addView(cameraPage)
+        pages.addView(connectionsPage)
+        pages.addView(settingsPage)
+        fun selectPage(page: Int) {
+            cameraPage.visibility = if (page == 0) View.VISIBLE else View.GONE
+            connectionsPage.visibility = if (page == 1) View.VISIBLE else View.GONE
+            settingsPage.visibility = if (page == 2) View.VISIBLE else View.GONE
+            listOf(cameraNav, connectionsNav, settingsNav).forEachIndexed { index, view ->
+                view.background = MobileUi.surface(if (index == page) MobileUi.BLUE else MobileUi.SURFACE_RAISED)
+                view.setTextColor(if (index == page) MobileUi.BACKGROUND else MobileUi.TEXT)
+            }
+        }
+        fun updatePresentation() {
+            proToggle.text = if (proMode) "Pro" else "Simple"
+            drawerTabs.visibility = if (proMode) View.VISIBLE else View.GONE
+            if (!proMode) drawer.visibility = View.GONE
+            cameraPanel.setSimpleMode(!proMode)
+        }
+        proToggle.setOnClickListener {
+            proMode = !proMode
+            proPreference.edit().putBoolean("pro_mode", proMode).apply()
+            updatePresentation()
+        }
+        cameraNav.setOnClickListener { selectPage(0) }
+        connectionsNav.setOnClickListener { selectPage(1) }
+        settingsNav.setOnClickListener { selectPage(2) }
+        updatePresentation(); selectPage(0)
+        root.addView(pages, LinearLayout.LayoutParams(-1,0,1f))
         setContentView(root)
         root.requestApplyInsets()
         selectedMode = CaptureService.Mode.fromName(CameraSettings(this).preferredMode)

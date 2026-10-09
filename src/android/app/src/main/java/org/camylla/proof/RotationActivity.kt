@@ -14,13 +14,14 @@ class RotationActivity : Activity() {
     @Volatile private var destroyed = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
-        layout.addView(TextView(this).apply { text = "Change security key"; textSize = 26f })
-        status = TextView(this).apply { text = "Preparing…"; textSize = 16f }
+        val inset = MobileUi.dp(this, 20)
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(inset, inset, inset, inset); setBackgroundColor(MobileUi.BACKGROUND) }
+        layout.addView(TextView(this).apply { text = "Change security key"; MobileUi.text(this, 26f) })
+        status = TextView(this).apply { text = "Preparing…"; setPadding(0, inset, 0, inset); MobileUi.text(this, 16f, true) }
         layout.addView(status)
-        confirm = Button(this).apply { text = "Confirm key change"; isEnabled = false; setOnClickListener { execute() } }
+        confirm = Button(this).apply { text = "Confirm key change"; MobileUi.button(this, prominent = true); isEnabled = false; setOnClickListener { execute() } }
         layout.addView(confirm)
-        layout.addView(Button(this).apply { text = "Back"; setOnClickListener { finish() } })
+        layout.addView(Button(this).apply { text = "Back"; MobileUi.button(this); setOnClickListener { finish() } })
         setContentView(ScrollView(this).apply { addView(layout) })
         executor.execute {
             val result = runCatching {
