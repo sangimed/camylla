@@ -90,6 +90,10 @@ internal class CameraRenderer(private val width: Int, private val height: Int, e
         try {
             makeCurrent(output)
             inputTexture.updateTexImage(); inputTexture.getTransformMatrix(transform)
+            // The producer matrix includes sensor orientation/front mirroring, not
+            // just the crop and GL Y flip. Applying it unchanged rotates a 16:9
+            // buffer into 9:16 while draw() still fits 16:9: circles become ellipses.
+            CameraTextureTransform.canonical(transform).copyInto(transform)
             draw(output, width, height, values["outputRotation"]?.toInt() ?: 0, values["outputMirror"] == 1.0, false)
             EGLExt.eglPresentationTimeANDROID(display, output, inputTexture.timestamp)
             check(EGL14.eglSwapBuffers(display, output))

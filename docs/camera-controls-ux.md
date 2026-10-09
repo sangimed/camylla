@@ -8,6 +8,10 @@ the previous design deferred: tap focus, focus lock/manual focus, torch and
 advanced exposure controls. The mobile interface is the primary camera surface;
 Windows offers the same supported controls during a phone-authorized session.
 
+The [2026-10-08 mobile UX checkpoint](validation/camera-mobile-ux-2026-10-08.md)
+records the preview/quick-toolbar improvements, canonical-state regression checks
+and remaining focused visual acceptance. It does not complete #26.
+
 ## Research observations
 
 These are documented product behaviors, not a measured ranking or hands-on

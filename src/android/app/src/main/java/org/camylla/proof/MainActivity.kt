@@ -37,11 +37,13 @@ class MainActivity : Activity() {
     private var service: CaptureService? = null
     private var bound = false
     private var requestedLens = CameraSelector.LENS_FACING_BACK
-    private lateinit var modes: Spinner
+    private lateinit var modeChoice: Button
+    private lateinit var startButton: Button
+    private lateinit var stopButton: Button
+    private var cameraList: List<CameraEntry> = emptyList()
+    private var selectedMode = CaptureService.Mode.HD
     private lateinit var stats: TextView
-    private lateinit var zoom: SeekBar
     private lateinit var desktops: Spinner
-    private lateinit var captureControls: LinearLayout
     private lateinit var trustControls: LinearLayout
     private lateinit var connectionStatus: TextView
     private lateinit var retryConnection: Button
@@ -49,11 +51,14 @@ class MainActivity : Activity() {
     private var trustedDesktops: List<TrustedDesktop> = emptyList()
     private val identity get() = ProductIdentity(this)
     private var trustError = ""
+    private var notice = ""
+    private var noticeUntil = 0L
     private lateinit var previewView: SurfaceView
     private lateinit var cameraPanel: CameraControlsPanel
     private lateinit var histogramView: View
     private lateinit var lensChoice: Button
     private lateinit var previewPlaceholder: TextView
+    private lateinit var focusBadge: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
@@ -64,6 +69,14 @@ class MainActivity : Activity() {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             service = (binder as CaptureService.LocalBinder).service
+            cameraList = runCatching { service?.cameras().orEmpty() }.getOrDefault(emptyList())
+            if (service?.stats()?.state !in listOf("Capturing", "Starting", "Binding")) {
+                val preferred = cameraList.find { it.id == CameraSettings(this@MainActivity).preferredCamera } ?: cameraList.firstOrNull()
+                if (preferred != null && selectedMode !in preferred.modes) {
+                    selectedMode = preferred.modes.first()
+                    CameraSettings(this@MainActivity).preferredMode = selectedMode.name
+                }
+            }
             attachPreview()
             showStats()
         }
@@ -79,62 +92,73 @@ class MainActivity : Activity() {
                 android.widget.Toast.makeText(this, "Connection setup has changed. Scan your PC's QR to pair again.", android.widget.Toast.LENGTH_LONG).show()
             upgrade.edit().putBoolean("upgrade_explained", true).apply()
         }
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
+        fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
         fun button(parent: LinearLayout, label: String, action: () -> Unit): Button {
-            val value = Button(this).apply { text = label; setOnClickListener { action() } }
+            val value = Button(this).apply {
+                text = label; isAllCaps = false; textSize = 14f
+                setPadding(dp(4), paddingTop, dp(4), paddingBottom)
+                setOnClickListener { action() }
+            }
             parent.addView(value); return value
         }
-        layout.addView(TextView(this).apply { text = "Camylla"; textSize = 28f })
-        connectionStatus = TextView(this).apply { textSize = 18f; setPadding(0, 24, 0, 24) }
-        layout.addView(connectionStatus)
+        connectionStatus = TextView(this).apply { textSize = 16f; setPadding(dp(12), dp(4), dp(12), dp(4)) }
         button(layout, "Scan PC QR") {
-            if (service?.stats()?.state?.let { it != "Stopped" } == true) connectionStatus.text = "Stop capture before pairing."
+            if (service?.stats()?.state?.let { it != "Stopped" } == true) showNotice("Stop capture before pairing.")
             else startActivity(Intent(this, PairActivity::class.java))
         }
         trustControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         desktops = Spinner(this)
         trustControls.addView(desktops)
         layout.addView(trustControls)
-        captureControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        modes = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
-                CaptureService.Mode.entries.map { it.label })
-        }
-        captureControls.addView(modes)
-        val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = android.view.View.GONE }
-        button(captureControls, "Camera settings") {
-            settings.visibility = if (settings.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
-        }
-        lensChoice = button(captureControls, "Choose optical camera") {
-            val list = service?.cameras().orEmpty()
-            if (list.isEmpty()) { connectionStatus.text = "Camera list unavailable"; return@button }
-            android.app.AlertDialog.Builder(this).setTitle("Select optical camera").setItems(list.map { it.label }.toTypedArray()) { _, i ->
-                CameraSettings(this).preferredCamera = list[i].id
-                requestedLens = if (list[i].facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
-                if (service?.stats()?.state != "Stopped") service?.selectCamera(list[i].id)
+        val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val selections = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        lensChoice = button(selections, "Camera") {
+            val list = cameraList
+            if (list.isEmpty()) { showNotice("Camera list unavailable"); return@button }
+            val currentMode = service?.cameraStatus?.mode?.takeIf { it.isNotEmpty() }?.let { CaptureService.Mode.fromName(it) } ?: selectedMode
+            val active = service?.stats()?.state in listOf("Capturing", "Starting", "Binding")
+            val token = service?.cameraStatus?.generation
+            android.app.AlertDialog.Builder(this).setTitle("Optical camera · digital zoom is separate")
+                .setItems(list.map { it.label + if (active && currentMode !in it.modes) " · unavailable in ${currentMode.label}" else "" }.toTypedArray()) { _, i ->
+                if (service?.cameraStatus?.generation != token) {
+                    showNotice("Camera changed. Choose the camera again."); return@setItems
+                }
+                if (active) {
+                    if (currentMode in list[i].modes) service?.selectCamera(list[i].id)
+                    else showNotice("Choose a compatible video mode before switching camera.")
+                } else {
+                    CameraSettings(this).preferredCamera = list[i].id
+                    if (selectedMode !in list[i].modes) selectedMode = list[i].modes.first()
+                    CameraSettings(this).preferredMode = selectedMode.name
+                }
+                showStats()
             }.show()
         }
-        button(settings, "Apply selected mode") { service?.setMode(CaptureService.Mode.entries[modes.selectedItemPosition]) }
-        settings.addView(TextView(this).apply { text = "Zoom" })
-        zoom = SeekBar(this).apply {
-            max = 100
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) { if (fromUser) service?.setZoom(progress / 100f) }
-                override fun onStartTrackingTouch(bar: SeekBar) = Unit
-                override fun onStopTrackingTouch(bar: SeekBar) = Unit
-            })
+        modeChoice = button(selections, "Video mode") {
+            val status = service?.cameraStatus ?: CameraStatus()
+            val current = cameraList.find { it.id == status.camera.ifEmpty { CameraSettings(this).preferredCamera } } ?: cameraList.firstOrNull()
+            val supported = current?.modes.orEmpty()
+            if (supported.isEmpty()) { showNotice("Video modes unavailable: no supported camera."); return@button }
+            android.app.AlertDialog.Builder(this).setTitle("Video mode · supported by this camera")
+                .setItems(supported.map { it.label }.toTypedArray()) { _, i ->
+                    if (service?.cameraStatus?.generation != status.generation) {
+                        showNotice("Camera changed. Choose the video mode again."); return@setItems
+                    }
+                    if (service?.stats()?.state == "Capturing") service?.setMode(supported[i])
+                    else { selectedMode = supported[i]; CameraSettings(this).preferredMode = selectedMode.name }
+                    showStats()
+                }.show()
         }
-        settings.addView(zoom)
-        zoom.visibility = View.GONE
+        for (i in 0 until selections.childCount) selections.getChildAt(i).layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         cameraPanel = CameraControlsPanel(this) { service }
-        captureControls.addView(cameraPanel)
         button(settings, "Forget this PC") {
             val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition)
             if (peer != null) android.app.AlertDialog.Builder(this).setTitle("Forget ${peer.name}?")
                 .setMessage("Capture will stop. Scan its QR to connect again.")
                 .setPositiveButton("Forget") { _, _ ->
                     startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
-                    runCatching { identity.revoke(peer.id); refreshDesktops() }.onFailure { connectionStatus.text = "Could not save this change." }
+                    runCatching { identity.revoke(peer.id); refreshDesktops() }.onFailure { showNotice("Could not save this change.") }
                 }.setNegativeButton("Cancel", null).show()
         }
         button(settings, "Change phone security key") { openRotation("phone") }
@@ -149,24 +173,30 @@ class MainActivity : Activity() {
                         .setMessage("All saved PC approvals will be revoked locally. The proposed phone key is retained if it may already be committed; the previous key will not be restored.")
                         .setPositiveButton("Repair") { _, _ ->
                             runCatching { identity.repairPendingRotation(); refreshDesktops() }
-                                .onFailure { connectionStatus.text = "Repair could not be saved. Capture remains blocked." }
+                                .onFailure { showNotice("Repair could not be saved. Capture remains blocked.") }
                         }.setNegativeButton("Cancel", null).show()
                 }.setNegativeButton("Cancel", null).show()
-            else connectionStatus.text = "No key change is pending."
+            else showNotice("No key change is pending.")
         }
         resumeKeyChange.visibility = android.view.View.GONE
-        captureControls.addView(settings)
-        layout.addView(captureControls)
-        stats = TextView(this).apply { textSize = 14f; visibility = android.view.View.GONE }
-        button(layout, "Diagnostics") {
-            stats.visibility = if (stats.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
-        }
-        layout.addView(stats)
+        layout.addView(settings)
+        stats = TextView(this).apply { textSize = 14f }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
+            insets
+        }
+        root.addView(connectionStatus)
         val body = LinearLayout(this).apply {
             orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
         }
-        val previewFrame = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK); minimumHeight = (180 * resources.displayMetrics.density).toInt() }
+        val previewFrame = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         previewView = SurfaceView(this).apply { contentDescription = "Camera preview. Tap to focus; pinch to zoom. Focus centre and zoom buttons are available below." }
         previewFrame.addView(previewView, FrameLayout.LayoutParams(-1,-1))
         previewPlaceholder = TextView(this).apply { text = "Start camera to preview"; setTextColor(android.graphics.Color.WHITE); textSize = 20f; gravity = android.view.Gravity.CENTER }
@@ -183,6 +213,12 @@ class MainActivity : Activity() {
             }
         }
         previewFrame.addView(histogramView, FrameLayout.LayoutParams(-1,-1))
+        focusBadge = TextView(this).apply {
+            setTextColor(android.graphics.Color.WHITE); setBackgroundColor(0xAA000000.toInt())
+            setPadding(dp(8), dp(4), dp(8), dp(4)); textSize = 16f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        previewFrame.addView(focusBadge, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.START))
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { service?.tapFocus(e.x.toDouble(), e.y.toDouble(), previewView.width, previewView.height); return true }
@@ -204,31 +240,55 @@ class MainActivity : Activity() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { attachPreview() }
             override fun surfaceDestroyed(holder: SurfaceHolder) { service?.attachPreview(null, 1, 1) }
         })
-        val scroll = ScrollView(this).apply { addView(layout) }
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        controls.addView(selections)
+        controls.addView(cameraPanel)
+        val drawer = ScrollView(this).apply { visibility = View.GONE }
+        cameraPanel.onQuickAdjustmentOpen = { drawer.removeAllViews(); drawer.visibility = View.GONE }
+        val drawerTabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun tab(title: String, content: View) {
+            val toggle = button(drawerTabs, title) {
+                cameraPanel.closeQuickAdjustment()
+                val close = drawer.visibility == View.VISIBLE && drawer.getChildAt(0) === content
+                drawer.removeAllViews()
+                drawer.visibility = if (close) View.GONE else View.VISIBLE
+                if (!close) drawer.addView(content)
+            }
+            toggle.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        }
+        tab("Advanced", cameraPanel.advancedView)
+        tab("Setup", layout)
+        tab("Diagnostics", stats)
+        controls.addView(drawerTabs)
+        controls.addView(drawer, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.22f).toInt()))
         if (body.orientation == LinearLayout.HORIZONTAL) {
-            body.addView(previewFrame, LinearLayout.LayoutParams(0,-1,2f)); body.addView(scroll, LinearLayout.LayoutParams(0,-1,1f))
+            body.addView(previewFrame, LinearLayout.LayoutParams(0, -1, 1f))
+            val panelWidth = minOf(dp(320), (resources.displayMetrics.widthPixels * 0.4f).toInt())
+            body.addView(ScrollView(this).apply { addView(controls) }, LinearLayout.LayoutParams(panelWidth, -1))
         } else {
-            body.addView(previewFrame, LinearLayout.LayoutParams(-1,0,3f)); body.addView(scroll, LinearLayout.LayoutParams(-1,0,2f))
+            body.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+            body.addView(controls, LinearLayout.LayoutParams(-1, -2))
         }
         root.addView(body, LinearLayout.LayoutParams(-1,0,1f))
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val start = Button(this).apply { text = "Start camera"; setOnClickListener { startWithPermission() } }
-        val stop = Button(this).apply { text = "Stop camera"; setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
+        startButton = Button(this).apply { text = "Start camera"; setOnClickListener { startWithPermission() } }
+        stopButton = Button(this).apply { text = "Stop camera"; setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
         retryConnection = Button(this).apply { text = "Retry now"; setOnClickListener { service?.retryConnection() } }
-        actions.addView(start, LinearLayout.LayoutParams(0,-2,1f))
+        actions.addView(startButton, LinearLayout.LayoutParams(0,-2,1f))
         actions.addView(retryConnection, LinearLayout.LayoutParams(0,-2,1f))
-        actions.addView(stop, LinearLayout.LayoutParams(0,-2,1f)); root.addView(actions)
+        actions.addView(stopButton, LinearLayout.LayoutParams(0,-2,1f)); root.addView(actions)
         setContentView(root)
-        modes.setSelection(CaptureService.Mode.fromName(CameraSettings(this).preferredMode).ordinal)
+        root.requestApplyInsets()
+        selectedMode = CaptureService.Mode.fromName(CameraSettings(this).preferredMode)
         showStats()
     }
 
     private fun startWithPermission() {
         if (identity.pendingRotation != null) {
-            connectionStatus.text = "Resume the pending key change before starting capture."; return
+            showNotice("Resume the pending key change before starting capture."); return
         }
         if (trustedDesktops.getOrNull(desktops.selectedItemPosition) == null) {
-            stats.text = "Pair a desktop before starting capture."; return
+            showNotice("Pair a desktop before starting capture."); return
         }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_REQUEST)
@@ -239,7 +299,7 @@ class MainActivity : Activity() {
         }
         val intent = Intent(this, CaptureService::class.java)
             .setAction(CaptureService.ACTION_START)
-            .putExtra(CaptureService.EXTRA_MODE, CaptureService.Mode.entries[modes.selectedItemPosition].name)
+            .putExtra(CaptureService.EXTRA_MODE, selectedMode.name)
             .putExtra(CaptureService.EXTRA_LENS, requestedLens)
             .putExtra(CaptureService.EXTRA_CAMERA, CameraSettings(this).preferredCamera)
             .putExtra(CaptureService.EXTRA_PEER, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id)
@@ -247,7 +307,7 @@ class MainActivity : Activity() {
     }
     private fun openRotation(role: String) {
         if (service?.stats()?.state?.let { it != "Stopped" } == true) {
-            connectionStatus.text = "Stop capture before changing security keys."; return
+            showNotice("Stop capture before changing security keys."); return
         }
         val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition) ?: return
         startActivity(Intent(this, RotationActivity::class.java).putExtra("role", role).putExtra("peer", peer.id))
@@ -257,7 +317,7 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_REQUEST) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startWithPermission()
-            else stats.text = "Camera permission denied. Capture was not started."
+            else showNotice("Camera permission denied. Capture was not started.")
         }
     }
 
@@ -286,8 +346,7 @@ class MainActivity : Activity() {
                 it.map { peer -> peer.name }.ifEmpty { listOf("No paired desktop") })
             val index = it.indexOfFirst { peer -> peer.id == selected }
             if (index >= 0) desktops.setSelection(index)
-            captureControls.visibility = if (it.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
-            trustControls.visibility = captureControls.visibility
+            trustControls.visibility = if (it.isEmpty()) View.GONE else View.VISIBLE
         }.onFailure { trustError = "Protected trust unavailable. Re-pair or restore this app's keys." }
     }
     private fun showStats() {
@@ -298,9 +357,24 @@ class MainActivity : Activity() {
             previewPlaceholder.visibility = if (value.state == "Capturing") View.GONE else View.VISIBLE
             previewPlaceholder.text = if (value.state == "Stopped") "Start camera to preview" else value.state
         }
-        if (::lensChoice.isInitialized) lensChoice.text = if (value.camera.isNotEmpty()) "Camera: ${value.camera}" else "Choose optical camera"
+        val canonical = service?.cameraStatus ?: CameraStatus()
+        val active = value.state in listOf("Starting", "Binding", "Capturing")
+        if (active && canonical.mode.isNotEmpty()) selectedMode = CaptureService.Mode.fromName(canonical.mode)
+        focusBadge.visibility = if (value.state == "Capturing") View.VISIBLE else View.GONE
+        focusBadge.text = "Focus: ${canonical.focus} · ${String.format(Locale.US, "%.2f", value.zoomRatio)}×"
+        val currentCamera = cameraList.find { it.id == canonical.camera.ifEmpty { CameraSettings(this).preferredCamera } } ?: cameraList.firstOrNull()
+        if (::lensChoice.isInitialized) {
+            lensChoice.text = "Camera\n${currentCamera?.let { "${it.label.substringBefore(" · ")} · ${it.id}" } ?: "Unavailable"}"
+            lensChoice.contentDescription = "Optical camera: ${currentCamera?.label ?: "Unavailable"}"
+            lensChoice.isEnabled = cameraList.isNotEmpty() && value.state !in listOf("Starting", "Binding")
+            modeChoice.text = "Video\n${if (selectedMode == CaptureService.Mode.HD) "720p" else "1080p"} · 30 FPS${if (value.state == "Binding") " · Applying" else ""}"
+            modeChoice.contentDescription = "Video mode: ${if (active) value.requestedMode else selectedMode.label}"
+            modeChoice.isEnabled = currentCamera != null && value.state !in listOf("Starting", "Binding")
+            startButton.isEnabled = !active && trustedDesktops.isNotEmpty()
+            stopButton.isEnabled = active
+        }
         service?.displayRotation(when (windowManager.defaultDisplay.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_180 -> 180; android.view.Surface.ROTATION_270 -> 270; else -> 0 })
-        desktops.isEnabled = value.state == "Stopped"
+        desktops.isEnabled = !active
         retryConnection.visibility = if (value.state == "Capturing" && value.network.state == "Recovering") View.VISIBLE else View.GONE
         connectionStatus.text = when {
             trustError.isNotEmpty() -> trustError
@@ -308,9 +382,13 @@ class MainActivity : Activity() {
             trustedDesktops.isEmpty() -> "Connect your PC by scanning its QR."
             else -> ConnectionStatus.message(value, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "your PC")
         }
+        if (value.state == "Capturing" && value.error.isNotEmpty())
+            connectionStatus.text = "${connectionStatus.text}\nControl rejected: ${value.error}"
         val quality = QualityState.current(value)
         if (value.state == "Capturing" && quality.reason != "Selected quality is active.")
             connectionStatus.text = "${connectionStatus.text}\n${quality.reason}"
+        if (android.os.SystemClock.elapsedRealtime() < noticeUntil)
+            connectionStatus.text = "${connectionStatus.text}\n$notice"
         stats.text = """
             ${if (trustError.isNotEmpty()) trustError else ""}
             State: ${value.state}${if (value.error.isNotEmpty()) " — ${value.error}" else ""}
@@ -338,6 +416,11 @@ class MainActivity : Activity() {
     companion object {
         private const val CAMERA_REQUEST = 1
         private const val NOTIFICATION_REQUEST = 2
+    }
+    private fun showNotice(message: String) {
+        notice = message
+        noticeUntil = android.os.SystemClock.elapsedRealtime() + 5000
+        connectionStatus.text = message
     }
     private fun attachPreview() {
         if (::previewView.isInitialized && previewView.holder.surface.isValid)

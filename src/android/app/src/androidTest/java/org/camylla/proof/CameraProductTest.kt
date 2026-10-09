@@ -21,6 +21,68 @@ import java.util.concurrent.atomic.AtomicReference
 /** Device tests inspect characteristics and synthesize GPU input. They never open a camera. */
 @RunWith(AndroidJUnit4::class)
 class CameraProductTest {
+    @Test fun mobileDrawersKeepCaptureActionsVisibleAndOpenOnlyOnePanel() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        instrumentation.waitForIdleSync()
+        fun buttons(view: android.view.View): List<android.widget.Button> =
+            if (view is android.widget.Button) listOf(view)
+            else if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { buttons(view.getChildAt(it)) }
+            else emptyList()
+        try {
+            instrumentation.runOnMainSync {
+                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
+                    .single { it.text.toString().equals(text, ignoreCase = true) }
+                val advanced = button("Advanced")
+                advanced.performClick()
+                val preset = button("Save preset")
+                assertTrue(preset.isShown)
+            }
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
+                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
+                    .single { it.text.toString().equals(text, ignoreCase = true) }
+                for (label in listOf("Start camera", "Stop camera"))
+                    assertTrue("$label hidden by advanced drawer", button(label).getGlobalVisibleRect(android.graphics.Rect()))
+                val preset = button("Save preset")
+                button("Setup").performClick()
+                val scan = button("Scan PC QR")
+                assertTrue(scan.isShown)
+                assertFalse(preset.isShown)
+                button("Setup").performClick()
+                assertFalse(scan.isShown)
+            }
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
+                val all = buttons(activity.findViewById(android.R.id.content))
+                for (label in listOf("Start camera", "Stop camera")) {
+                    val action = all.single { it.text.toString().equals(label, ignoreCase = true) }
+                    assertTrue("$label not visible", action.getGlobalVisibleRect(android.graphics.Rect()))
+                }
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
+    @Test fun mobileControlsAcceptLateDescriptorsAndRuntimeUnavailability() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            val panel = CameraControlsPanel(instrumentation.targetContext) { null }
+            fun buttons(view: android.view.View): List<android.widget.Button> =
+                if (view is android.widget.Button) listOf(view)
+                else if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { buttons(view.getChildAt(it)) }
+                else emptyList()
+            panel.update(CameraStatus(generation = 7, message = "Changing camera"))
+            val available = CameraStatus(generation = 7, options = listOf(CameraOption("torch", "Torch")), applied = mapOf("torch" to 0.0))
+            panel.update(available)
+            assertTrue(buttons(panel).any { it.text.toString() == "Torch\nOff" && it.isEnabled })
+            panel.update(available.copy(applied = mapOf("torch" to 1.0)))
+            assertTrue(buttons(panel).any { it.text.toString() == "Torch\nOn" && it.isEnabled })
+            panel.update(available.copy(options = listOf(CameraOption("torch", "Torch", reason = "No flash unit"))))
+            assertTrue(buttons(panel).any { it.text.toString() == "Torch\nUnavailable" && !it.isEnabled && it.contentDescription.contains("No flash unit") })
+        }
+    }
+
     @Test fun cameraCommandsRejectCoercionWrongFieldsAndInvalidBounds() {
         fun command() = org.json.JSONObject().put("type","camera_command").put("version",3).put("session_id","ab".repeat(16))
             .put("generation",1).put("request_id",1L).put("control","zoom").put("value",2.0)
@@ -177,6 +239,67 @@ class CameraProductTest {
         } finally {
             val done = CountDownLatch(1); handler.post { runCatching { renderer.get()?.close() }; done.countDown() }
             done.await(5,TimeUnit.SECONDS); reader.close(); thread.quitSafely()
+        }
+    }
+
+    @Test fun rendererPreservesCirclesOnIndependentPortraitPreviewAndLandscapeOutput() {
+        val thread = HandlerThread("camylla-aspect-test").apply { start() }
+        val handler = Handler(thread.looper)
+        fun reader(w: Int, h: Int) = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3,
+            HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or HardwareBuffer.USAGE_CPU_READ_OFTEN)
+        val output = reader(128, 72); val preview = reader(90, 160)
+        val renderer = AtomicReference<CameraRenderer>()
+        val failure = AtomicReference<Throwable>()
+        val frameSignal = AtomicReference<CountDownLatch>()
+        val initialized = CountDownLatch(1)
+        handler.post {
+            try {
+                val r = CameraRenderer(128, 72, output.surface, { frameSignal.get()?.countDown() },
+                    { failure.set(AssertionError(it)); frameSignal.get()?.countDown() })
+                renderer.set(r); r.attach(preview.surface, 90, 160)
+                r.inputTexture.setOnFrameAvailableListener({ r.frame() }, handler)
+            } catch (error: Throwable) { failure.set(error) } finally { initialized.countDown() }
+        }
+        fun assertCircle(reader: ImageReader, description: String) {
+            val image = reader.acquireLatestImage() ?: throw AssertionError("Missing $description image")
+            image.use { frame ->
+                var left = frame.width; var right = -1; var top = frame.height; var bottom = -1
+                val plane = frame.planes[0]
+                for (y in 0 until frame.height) for (x in 0 until frame.width) {
+                    if ((plane.buffer.get(y * plane.rowStride + x * plane.pixelStride).toInt() and 255) > 180) {
+                        left = minOf(left, x); right = maxOf(right, x); top = minOf(top, y); bottom = maxOf(bottom, y)
+                    }
+                }
+                val width = right - left + 1; val height = bottom - top + 1
+                assertTrue("$description missing circle", width > 8 && height > 8)
+                assertTrue("$description stretched circle: ${width}x$height", kotlin.math.abs(width - height) <= 2)
+                assertTrue("$description not centred horizontally", kotlin.math.abs(left + right + 1 - frame.width) <= 2)
+                assertTrue("$description not centred vertically", kotlin.math.abs(top + bottom + 1 - frame.height) <= 2)
+            }
+        }
+        try {
+            assertTrue(initialized.await(5, TimeUnit.SECONDS)); failure.get()?.let { throw it }
+            for (rotation in listOf(0, 90, 180, 270)) for (mirror in listOf(false, true)) {
+                val ready = CountDownLatch(1); frameSignal.set(ready)
+                handler.post {
+                    try {
+                        val r = renderer.get()
+                        r.values = mapOf("outputRotation" to rotation.toDouble(), "outputMirror" to if (mirror) 1.0 else 0.0,
+                            "previewMirror" to if (mirror) 1.0 else 0.0)
+                        r.previewRotation = rotation
+                        val canvas = r.input.lockCanvas(null); canvas.drawColor(Color.BLACK)
+                        canvas.drawCircle(64f, 36f, 12f, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+                        r.input.unlockCanvasAndPost(canvas)
+                    } catch (error: Throwable) { failure.set(error); ready.countDown() }
+                }
+                assertTrue(ready.await(5, TimeUnit.SECONDS)); failure.get()?.let { throw it }
+                assertCircle(output, "output rotation=$rotation mirror=$mirror")
+                assertCircle(preview, "preview rotation=$rotation mirror=$mirror")
+            }
+        } finally {
+            val done = CountDownLatch(1)
+            handler.post { runCatching { renderer.get()?.close() }; done.countDown() }
+            done.await(5, TimeUnit.SECONDS); output.close(); preview.close(); thread.quitSafely()
         }
     }
 }
