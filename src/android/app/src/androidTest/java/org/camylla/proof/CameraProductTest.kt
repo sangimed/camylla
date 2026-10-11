@@ -35,6 +35,7 @@ class CameraProductTest {
             instrumentation.runOnMainSync {
                 fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
                     .single { it.text.toString().equals(text, ignoreCase = true) }
+                assertTrue("First-run pairing action should appear on Camera", button("Connect a PC").isShown)
                 button("Simple").performClick()
                 val advanced = button("Pro controls")
                 advanced.performClick()
@@ -45,10 +46,11 @@ class CameraProductTest {
             instrumentation.runOnMainSync {
                 fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
                     .single { it.text.toString().equals(text, ignoreCase = true) }
-                for (label in listOf("Start camera", "Stop camera"))
-                    assertTrue("$label hidden by advanced drawer", button(label).getGlobalVisibleRect(android.graphics.Rect()))
+                assertTrue("Start action hidden by Pro controls", button("Start camera").getGlobalVisibleRect(android.graphics.Rect()))
+                assertFalse("Stop action should stay hidden while idle", button("Stop camera").isShown)
                 val preset = button("Save preset")
                 button("Connections").performClick()
+                assertFalse("Camera pairing card should leave the Connections page", button("Connect a PC").isShown)
                 val scan = button("Connect a PC · Scan QR")
                 assertTrue(scan.isShown)
                 assertFalse(preset.isShown)
@@ -58,10 +60,10 @@ class CameraProductTest {
             instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync {
                 val all = buttons(activity.findViewById(android.R.id.content))
-                for (label in listOf("Start camera", "Stop camera")) {
-                    val action = all.single { it.text.toString().equals(label, ignoreCase = true) }
-                    assertTrue("$label not visible", action.getGlobalVisibleRect(android.graphics.Rect()))
-                }
+                val start = all.single { it.text.toString().equals("Start camera", ignoreCase = true) }
+                val stop = all.single { it.text.toString().equals("Stop camera", ignoreCase = true) }
+                assertTrue("Start action not visible", start.getGlobalVisibleRect(android.graphics.Rect()))
+                assertFalse("Stop action should stay hidden while idle", stop.isShown)
             }
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
