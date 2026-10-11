@@ -58,6 +58,7 @@ class MainActivity : Activity() {
     private lateinit var histogramView: View
     private lateinit var lensChoice: Button
     private lateinit var previewPlaceholder: TextView
+    private lateinit var connectionPrompt: LinearLayout
     private lateinit var focusBadge: TextView
     private lateinit var focusTargetView: FocusTargetView
     private val handler = Handler(Looper.getMainLooper())
@@ -114,10 +115,7 @@ class MainActivity : Activity() {
         connectionStatus = TextView(this).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); MobileUi.text(this, 15f, true) }
         connections.addView(TextView(this).apply { text = "Connections"; MobileUi.text(this, 24f) })
         connections.addView(TextView(this).apply { text = "Pair a PC to start your camera stream."; MobileUi.text(this, 15f, true) })
-        button(connections, "Connect a PC · Scan QR") {
-            if (service?.stats()?.state?.let { it != "Stopped" } == true) showNotice("Stop capture before pairing.")
-            else startActivity(Intent(this, PairActivity::class.java))
-        }
+        button(connections, "Connect a PC · Scan QR") { openPairing() }
         trustControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         desktops = Spinner(this)
         trustControls.addView(desktops)
@@ -233,6 +231,21 @@ class MainActivity : Activity() {
         previewFrame.addView(previewView, FrameLayout.LayoutParams(-1,-1))
         previewPlaceholder = TextView(this).apply { text = "Start camera to preview"; setTextColor(android.graphics.Color.WHITE); textSize = 20f; gravity = android.view.Gravity.CENTER }
         previewFrame.addView(previewPlaceholder, FrameLayout.LayoutParams(-1,-1))
+        connectionPrompt = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            background = MobileUi.surface(MobileUi.SURFACE, 20f)
+            addView(TextView(this@MainActivity).apply { text = "Connect your PC"; gravity = android.view.Gravity.CENTER; MobileUi.text(this, 20f) })
+            addView(TextView(this@MainActivity).apply {
+                text = "Scan the QR code in Camylla for Windows to start streaming."; gravity = android.view.Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(12)); MobileUi.text(this, 15f, true)
+            })
+            addView(Button(this@MainActivity).apply {
+                text = "Connect a PC"; MobileUi.button(this, prominent = true); setOnClickListener { openPairing() }
+            })
+        }
+        previewFrame.addView(connectionPrompt, FrameLayout.LayoutParams(dp(360), -2, android.view.Gravity.CENTER))
         histogramView = object : View(this) {
             val paint = Paint().apply { color = android.graphics.Color.WHITE; strokeWidth = 2f }
             override fun onDraw(canvas: Canvas) {
@@ -394,6 +407,11 @@ class MainActivity : Activity() {
         startActivity(Intent(this, RotationActivity::class.java).putExtra("role", role).putExtra("peer", peer.id))
     }
 
+    private fun openPairing() {
+        if (service?.stats()?.state?.let { it != "Stopped" } == true) showNotice("Stop capture before pairing.")
+        else startActivity(Intent(this, PairActivity::class.java))
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_REQUEST) {
@@ -456,6 +474,9 @@ class MainActivity : Activity() {
             modeChoice.isEnabled = currentCamera != null && value.state !in listOf("Starting", "Binding")
             startButton.isEnabled = !active && trustedDesktops.isNotEmpty()
             stopButton.isEnabled = active
+            startButton.visibility = if (active) View.GONE else View.VISIBLE
+            stopButton.visibility = if (active) View.VISIBLE else View.GONE
+            connectionPrompt.visibility = if (trustedDesktops.isEmpty() && !active) View.VISIBLE else View.GONE
         }
         service?.displayRotation(when (windowManager.defaultDisplay.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_180 -> 180; android.view.Surface.ROTATION_270 -> 270; else -> 0 })
         desktops.isEnabled = !active
