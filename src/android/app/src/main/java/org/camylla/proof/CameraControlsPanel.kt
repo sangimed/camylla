@@ -19,7 +19,11 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
     private var zoomAdjustment: View? = null
     var onQuickAdjustmentOpen: (() -> Unit)? = null
     fun closeQuickAdjustment() { zoomAdjustment?.visibility = GONE }
-    private val state = TextView(context).apply { textSize = 16f; setPadding(8, 12, 8, 12) }
+    private val state = TextView(context).apply {
+        MobileUi.text(this, 16f, muted = true)
+        val inset = MobileUi.dp(context, 8)
+        setPadding(inset, MobileUi.dp(context, 12), inset, MobileUi.dp(context, 12))
+    }
     private val quick = LinearLayout(context).apply { orientation = VERTICAL }
     private val pro = LinearLayout(context).apply { orientation = VERTICAL }
     val advancedView: View get() = pro
@@ -31,6 +35,15 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
         orientation = VERTICAL; addView(state)
         addView(quick)
     }
+    private fun styleButton(button: Button) {
+        MobileUi.button(button)
+        button.textSize = 14f
+    }
+    private fun spaced(width: Int = LayoutParams.MATCH_PARENT, weight: Float = 0f): LayoutParams =
+        LayoutParams(width, LayoutParams.WRAP_CONTENT, weight).apply {
+            val gap = (6 * resources.displayMetrics.density).toInt()
+            setMargins(gap, gap, gap, gap)
+        }
     /** Simple mode leaves focus to the direct preview gesture and exposes only zoom and torch. */
     fun setSimpleMode(value: Boolean) {
         if (simpleMode == value) return
@@ -54,21 +67,18 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
             val actions = LinearLayout(context).apply { orientation = HORIZONTAL }
             fun action(label: String, key: String, value: () -> Double) {
                 actions.addView(Button(context).apply {
-                    text = label; isAllCaps = false; textSize = 14f; contentDescription = label; isEnabled = options[key]?.reason == null && options.containsKey(key)
-                    minimumHeight = (48 * resources.displayMetrics.density).toInt()
-                    val inset = (4 * resources.displayMetrics.density).toInt()
-                    setPadding(inset, paddingTop, inset, paddingBottom)
+                    text = label; styleButton(this); contentDescription = label; isEnabled = options[key]?.reason == null && options.containsKey(key)
                     setOnClickListener { service()?.control(key, value()) }
                     quickButtons[key] = this
-                }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+                }, spaced(0, 1f))
             }
             if (!simpleMode) {
                 action("Focus Auto", "focusMode") { CameraQuickControls.autoMode(options["focusMode"]?.choices.orEmpty())?.toDouble() ?: 0.0 }
                 action("Focus lock", "focusLock") { if (service()?.cameraStatus?.applied?.get("focusLock") == 1.0) 0.0 else 1.0 }
             }
             action("Torch", "torch") { if (service()?.cameraStatus?.applied?.get("torch") == 1.0) 0.0 else 1.0 }
-            quick.addView(actions)
-            val focusCentre = Button(context).apply { text = "Focus centre"; isAllCaps = false; textSize = 14f; setOnClickListener { service()?.control("focusPoint",1.0) } }
+            quick.addView(actions, spaced())
+            val focusCentre = Button(context).apply { text = "Focus centre"; styleButton(this); setOnClickListener { service()?.control("focusPoint",1.0) } }
             quickButtons["focusPoint"] = focusCentre
             // Keep the gesture alternative beside the zoom, rather than adding another full row.
             val zoomRow = LinearLayout(context).apply { orientation = HORIZONTAL }
@@ -76,7 +86,7 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
             zoomAdjustment = zoomControls
             options["zoom"]?.let { row(zoomControls, it) }
             val zoomButton = Button(context).apply {
-                isAllCaps = false; textSize = 14f
+                styleButton(this)
                 setOnClickListener {
                     val open = zoomControls.visibility != VISIBLE
                     if (open) onQuickAdjustmentOpen?.invoke()
@@ -84,10 +94,10 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                 }
             }
             quickButtons["zoom"] = zoomButton
-            zoomRow.addView(zoomButton, LayoutParams(0, LayoutParams.WRAP_CONTENT, if (simpleMode) 1f else .5f))
-            if (!simpleMode) zoomRow.addView(focusCentre, LayoutParams(0, LayoutParams.WRAP_CONTENT, .5f))
-            quick.addView(zoomRow)
-            quick.addView(zoomControls)
+            zoomRow.addView(zoomButton, spaced(0, if (simpleMode) 1f else .5f))
+            if (!simpleMode) zoomRow.addView(focusCentre, spaced(0, .5f))
+            quick.addView(zoomRow, spaced())
+            quick.addView(zoomControls, spaced())
             val groups = linkedMapOf(
                 "Focus" to listOf("focusMode", "focusDistance", "focusLock"),
                 "Exposure and light" to listOf("torch", "torchStrength", "exposureMode", "ev", "aeLock", "iso", "shutter", "antiFlicker"),
@@ -96,34 +106,39 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                 "Output and monitoring" to listOf("outputRotation", "outputMirror", "previewRotation", "previewMirror", "orientationLock", "grid", "zebras", "peaking", "histogram"))
             for ((name, keys) in groups) {
                 val panel = LinearLayout(context).apply { orientation = VERTICAL; visibility = GONE }
-                pro.addView(Button(context).apply { text = name; setOnClickListener {
+                pro.addView(Button(context).apply { text = name; styleButton(this); setOnClickListener {
                     val open = panel.visibility != VISIBLE
                     for (i in 0 until pro.childCount) if (pro.getChildAt(i) is LinearLayout) pro.getChildAt(i).visibility = GONE
                     panel.visibility = if (open) VISIBLE else GONE
-                } })
-                keys.mapNotNull { options[it] }.forEach { row(panel, it) }; pro.addView(panel)
+                } }, spaced())
+                keys.mapNotNull { options[it] }.forEach { row(panel, it) }; pro.addView(panel, spaced())
             }
-            pro.addView(Button(context).apply { text = "Reset camera settings"; setOnClickListener { service()?.resetSettings() } })
-            pro.addView(Button(context).apply { text = "Save preset"; setOnClickListener {
-                val input = EditText(context).apply { hint = "Preset name"; maxLines = 1 }
+            pro.addView(Button(context).apply { text = "Reset camera settings"; styleButton(this); setOnClickListener { service()?.resetSettings() } }, spaced())
+            pro.addView(Button(context).apply { text = "Save preset"; styleButton(this); setOnClickListener {
+                val input = EditText(context).apply { hint = "Preset name"; maxLines = 1; MobileUi.input(this) }
                 AlertDialog.Builder(context).setTitle("Save camera preset").setView(input).setPositiveButton("Save") { _, _ ->
                     runCatching { service()?.savePreset(input.text.toString()) }.onFailure {
                         Toast.makeText(context, it.message ?: "Could not save preset", Toast.LENGTH_LONG).show()
                     }
                 }.setNegativeButton("Cancel", null).show()
-            } })
-            pro.addView(Button(context).apply { text = "Load or delete preset"; setOnClickListener {
+            } }, spaced())
+            pro.addView(Button(context).apply { text = "Load or delete preset"; styleButton(this); setOnClickListener {
                 val names = CameraSettings(context).presets().keys.toTypedArray()
                 if (names.isEmpty()) { Toast.makeText(context, "No saved presets", Toast.LENGTH_LONG).show(); return@setOnClickListener }
                 AlertDialog.Builder(context).setTitle("Camera presets").setItems(names) { _, index ->
                     AlertDialog.Builder(context).setTitle(names[index]).setPositiveButton("Load") { _, _ -> service()?.applyPreset(names[index]) }
                         .setNeutralButton("Delete") { _, _ -> CameraSettings(context).deletePreset(names[index]) }.setNegativeButton("Cancel", null).show()
                 }.show()
-            } })
+            } }, spaced())
         }
         val availability = mutableListOf<String>()
         for ((key, button) in quickButtons) {
             val presentation = CameraQuickControls.present(key, status)
+            val selected = key in setOf("torch", "focusLock") && status.applied[key] == 1.0
+            if (button.isSelected != selected) {
+                MobileUi.button(button, selected = selected)
+                button.textSize = 14f
+            }
             button.text = presentation.label
             button.isEnabled = presentation.enabled
             button.contentDescription = presentation.label + (presentation.reason?.let { ". $it" } ?: "")
@@ -146,10 +161,15 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
         }
     }
     private fun row(parent: LinearLayout, option: CameraOption) {
-        val label = TextView(context).apply { textSize = 16f; setPadding(8,16,8,0) }; parent.addView(label)
+        val label = TextView(context).apply {
+            MobileUi.text(this, 16f)
+            val horizontalInset = MobileUi.dp(context, 8)
+            setPadding(horizontalInset, MobileUi.dp(context, 16), horizontalInset, 0)
+        }
+        parent.addView(label)
         if (option.reason != null) { rows.add(Row(option, label, null, null)); return }
         if (option.choices.isNotEmpty()) {
-            val button = Button(context).apply { text = "Choose ${option.label}"; setOnClickListener {
+            val button = Button(context).apply { text = "Choose ${option.label}"; styleButton(this); setOnClickListener {
                 val keys = option.choices.keys.toList()
                 val token = generation
                 AlertDialog.Builder(context).setTitle(option.label).setItems(keys.map { option.choices.getValue(it) }.toTypedArray()) { _, i ->
@@ -158,9 +178,9 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                     else Toast.makeText(context, "Camera changed. Choose the setting again.", Toast.LENGTH_LONG).show()
                 }.setNegativeButton("Cancel", null).show()
             } }
-            parent.addView(button); rows.add(Row(option, label, button, null)); return
+            parent.addView(button, spaced()); rows.add(Row(option, label, button, null)); return
         }
-        val slider = SeekBar(context).apply { max = 1000; contentDescription = option.label; minimumHeight = (48 * resources.displayMetrics.density).toInt() }
+        val slider = SeekBar(context).apply { max = 1000; contentDescription = option.label; MobileUi.seekBar(this) }
         val row = Row(option, label, null, slider); rows.add(row)
         slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onStartTrackingTouch(bar: SeekBar) { row.dragging = true }

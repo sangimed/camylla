@@ -3,6 +3,8 @@ package org.camylla.proof
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.content.res.ColorStateList
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -26,16 +28,28 @@ internal object MobileUi {
     fun text(view: TextView, size: Float = 15f, muted: Boolean = false) {
         view.setTextColor(if (muted) MUTED else TEXT); view.textSize = size
     }
-    fun button(view: Button, prominent: Boolean = false, destructive: Boolean = false) {
+    fun button(view: Button, prominent: Boolean = false, destructive: Boolean = false, selected: Boolean = false) {
         view.isAllCaps = false
         view.minHeight = dp(view.context, 48)
-        view.setTextColor(if (prominent || destructive) BACKGROUND else TEXT)
-        view.background = surface(if (destructive) RED else if (prominent) BLUE else SURFACE_RAISED)
+        view.setTextColor(if (prominent || destructive || selected) BACKGROUND else TEXT)
+        val fill = if (destructive) RED else if (prominent || selected) BLUE else SURFACE_RAISED
+        val mask = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(view.context, 12).toFloat() }
+        view.background = RippleDrawable(
+            ColorStateList.valueOf(0x66FFFFFF),
+            surface(fill, dp(view.context, 12).toFloat()),
+            mask
+        )
         view.setPadding(dp(view.context, 12), 0, dp(view.context, 12), 0)
+        view.isSelected = selected
+    }
+    fun seekBar(view: android.widget.SeekBar) {
+        view.minimumHeight = dp(view.context, 48)
+        view.progressTintList = ColorStateList.valueOf(BLUE)
+        view.thumbTintList = ColorStateList.valueOf(BLUE)
     }
     fun card(view: View) { view.background = surface() }
     fun input(view: EditText) {
-        view.setTextColor(TEXT); view.setHintTextColor(MUTED); view.background = surface(SURFACE_RAISED, 12f)
+        view.setTextColor(TEXT); view.setHintTextColor(MUTED); view.background = surface(SURFACE_RAISED, dp(view.context, 12).toFloat())
         view.setPadding(dp(view.context, 12), dp(view.context, 8), dp(view.context, 12), dp(view.context, 8))
     }
 }

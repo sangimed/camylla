@@ -35,6 +35,11 @@ class CameraProductTest {
             instrumentation.runOnMainSync {
                 fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
                     .single { it.text.toString().equals(text, ignoreCase = true) }
+                val cameraTab = button("Camera")
+                assertTrue("Active page should be visibly selected", cameraTab.isSelected)
+                assertTrue("Custom button should retain Android press feedback", cameraTab.background is android.graphics.drawable.RippleDrawable)
+                val navParams = cameraTab.layoutParams as android.widget.LinearLayout.LayoutParams
+                assertTrue("Navigation controls should have visible separation", navParams.leftMargin >= MobileUi.dp(activity, 4) && navParams.rightMargin >= MobileUi.dp(activity, 4))
                 assertTrue("First-run pairing action should appear on Camera", button("Connect a PC").isShown)
                 button("Simple").performClick()
                 val advanced = button("Pro controls")
@@ -53,6 +58,8 @@ class CameraProductTest {
                 assertFalse("Camera pairing card should leave the Connections page", button("Connect a PC").isShown)
                 val scan = button("Connect a PC · Scan QR")
                 assertTrue(scan.isShown)
+                assertTrue("Selected navigation state did not follow page", button("Connections").isSelected)
+                assertFalse("Previous navigation state remained selected", button("Camera").isSelected)
                 assertFalse(preset.isShown)
                 button("Camera").performClick()
                 assertFalse(scan.isShown)
@@ -84,9 +91,36 @@ class CameraProductTest {
             panel.update(available)
             assertTrue(buttons(panel).any { it.text.toString() == "Torch\nOff" && it.isEnabled })
             panel.update(available.copy(applied = mapOf("torch" to 1.0)))
-            assertTrue(buttons(panel).any { it.text.toString() == "Torch\nOn" && it.isEnabled })
+            val torch = buttons(panel).single { it.text.toString() == "Torch\nOn" }
+            assertTrue(torch.isEnabled)
+            assertTrue("Enabled toggle should expose its persistent active state", torch.isSelected)
+            assertTrue("Camera control should provide Android press feedback", torch.background is android.graphics.drawable.RippleDrawable)
             panel.update(available.copy(options = listOf(CameraOption("torch", "Torch", reason = "No flash unit"))))
             assertTrue(buttons(panel).any { it.text.toString() == "Torch\nUnavailable" && !it.isEnabled && it.contentDescription.contains("No flash unit") })
+        }
+    }
+
+    @Test fun darkCameraControlLabelsAndSliderUseReadableProductColors() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            val panel = CameraControlsPanel(instrumentation.targetContext) { null }
+            panel.update(CameraStatus(
+                generation = 9,
+                options = listOf(CameraOption("zoom", "Digital zoom", min = 1.0, max = 4.0, step = 0.1, unit = "x")),
+                applied = mapOf("zoom" to 1.0),
+                message = "Applying digital zoom"
+            ))
+            fun views(view: android.view.View): List<android.view.View> =
+                listOf(view) + if (view is android.view.ViewGroup)
+                    (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
+            val label = views(panel).filterIsInstance<android.widget.TextView>()
+                .single { it.text.toString().startsWith("Digital zoom:") }
+            assertEquals("Slider label must contrast with dark controls", MobileUi.TEXT, label.currentTextColor)
+            val slider = views(panel).filterIsInstance<android.widget.SeekBar>().single()
+            assertEquals("Slider accent should use the product blue", MobileUi.BLUE, slider.thumbTintList?.defaultColor)
+            val state = views(panel).filterIsInstance<android.widget.TextView>()
+                .single { it.text.toString().contains("Applying digital zoom") }
+            assertEquals("Inline status should use the readable muted color", MobileUi.MUTED, state.currentTextColor)
         }
     }
 

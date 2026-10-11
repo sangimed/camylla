@@ -37,6 +37,7 @@ Separate authenticated TLS/TCP connections for video and controls are the initia
 
 - [Project roadmap](ROADMAP.md): current milestone, future phases, and tracking convention.
 - [Living design](docs/design.md): product scope, architecture, validation gates, and milestones.
+- [Product and interface design](DESIGN.md): visual tokens, interaction rules, accessibility, and links to detailed UX briefs.
 - [Glossary](GLOSSARY.md): shared domain terminology.
 - [Architecture decisions](docs/adr/): accepted decisions and their trade-offs.
 - [Reference-project inspection](docs/reference-projects.md): source research and dependency-review notes.

@@ -110,7 +110,10 @@ class MainActivity : Activity() {
                 MobileUi.button(this)
                 setOnClickListener { action() }
             }
-            parent.addView(value); return value
+            val params = if (parent.orientation == LinearLayout.HORIZONTAL)
+                LinearLayout.LayoutParams(0, -2, 1f) else LinearLayout.LayoutParams(-1, -2)
+            params.setMargins(dp(4), dp(4), dp(4), dp(4))
+            parent.addView(value, params); return value
         }
         connectionStatus = TextView(this).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); MobileUi.text(this, 15f, true) }
         connections.addView(TextView(this).apply { text = "Connections"; MobileUi.text(this, 24f) })
@@ -160,7 +163,8 @@ class MainActivity : Activity() {
                     showStats()
                 }.show()
         }
-        for (i in 0 until selections.childCount) selections.getChildAt(i).layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        for (i in 0 until selections.childCount) selections.getChildAt(i).layoutParams =
+            LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
         cameraPanel = CameraControlsPanel(this) { service }
         button(connectionManagement, "Forget this PC") {
             val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition)
@@ -212,14 +216,16 @@ class MainActivity : Activity() {
         titleRow.addView(TextView(this@MainActivity).apply { text = "CAMYLLA"; letterSpacing = .12f; MobileUi.text(this, 20f) }, LinearLayout.LayoutParams(0, -2, 1f))
         val proPreference = getSharedPreferences("mobile-ui", Context.MODE_PRIVATE)
         var proMode = proPreference.getBoolean("pro_mode", false)
-        val proToggle = Button(this).apply { MobileUi.button(this); minHeight = dp(40) }
+        val proToggle = Button(this).apply { MobileUi.button(this) }
         titleRow.addView(proToggle)
         header.addView(titleRow)
         val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val cameraNav = Button(this).apply { text = "Camera"; MobileUi.button(this) }
         val connectionsNav = Button(this).apply { text = "Connections"; MobileUi.button(this) }
         val settingsNav = Button(this).apply { text = "Settings"; MobileUi.button(this) }
-        listOf(cameraNav, connectionsNav, settingsNav).forEach { navigation.addView(it, LinearLayout.LayoutParams(0, -2, 1f)) }
+        listOf(cameraNav, connectionsNav, settingsNav).forEach {
+            navigation.addView(it, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+        }
         header.addView(navigation)
         root.addView(header)
         root.addView(connectionStatus)
@@ -318,7 +324,7 @@ class MainActivity : Activity() {
                 drawer.visibility = if (close) View.GONE else View.VISIBLE
                 if (!close) drawer.addView(content)
             }
-            toggle.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            toggle.layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
         }
         tab("Pro controls", cameraPanel.advancedView)
         controls.addView(drawerTabs)
@@ -337,9 +343,9 @@ class MainActivity : Activity() {
         startButton = Button(this).apply { text = "Start camera"; MobileUi.button(this, prominent = true); setOnClickListener { startWithPermission() } }
         stopButton = Button(this).apply { text = "Stop camera"; MobileUi.button(this, destructive = true); setOnClickListener { startService(Intent(this@MainActivity, CaptureService::class.java).setAction(CaptureService.ACTION_STOP)) } }
         retryConnection = Button(this).apply { text = "Retry now"; MobileUi.button(this); setOnClickListener { service?.retryConnection() } }
-        actions.addView(startButton, LinearLayout.LayoutParams(0,-2,1f))
-        actions.addView(retryConnection, LinearLayout.LayoutParams(0,-2,1f))
-        actions.addView(stopButton, LinearLayout.LayoutParams(0,-2,1f)); cameraPage.addView(actions)
+        actions.addView(startButton, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+        actions.addView(retryConnection, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+        actions.addView(stopButton, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }); cameraPage.addView(actions)
         val pages = FrameLayout(this)
         val connectionsPage = ScrollView(this).apply { addView(connections); visibility = View.GONE }
         val settingsPage = ScrollView(this).apply { addView(layout); visibility = View.GONE }
@@ -351,12 +357,12 @@ class MainActivity : Activity() {
             connectionsPage.visibility = if (page == 1) View.VISIBLE else View.GONE
             settingsPage.visibility = if (page == 2) View.VISIBLE else View.GONE
             listOf(cameraNav, connectionsNav, settingsNav).forEachIndexed { index, view ->
-                view.background = MobileUi.surface(if (index == page) MobileUi.BLUE else MobileUi.SURFACE_RAISED)
-                view.setTextColor(if (index == page) MobileUi.BACKGROUND else MobileUi.TEXT)
+                MobileUi.button(view, selected = index == page)
             }
         }
         fun updatePresentation() {
             proToggle.text = if (proMode) "Pro" else "Simple"
+            MobileUi.button(proToggle, selected = proMode)
             drawerTabs.visibility = if (proMode) View.VISIBLE else View.GONE
             if (!proMode) drawer.visibility = View.GONE
             cameraPanel.setSimpleMode(!proMode)
@@ -444,8 +450,23 @@ class MainActivity : Activity() {
         runCatching { identity.desktops().filter { !it.revoked } }.onSuccess {
             trustedDesktops = it; trustError = ""
             resumeKeyChange.visibility = if (identity.pendingRotation != null) android.view.View.VISIBLE else android.view.View.GONE
-            desktops.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-                it.map { peer -> peer.name }.ifEmpty { listOf("No paired desktop") })
+            val names = it.map { peer -> peer.name }.ifEmpty { listOf("No paired desktop") }
+            desktops.setPopupBackgroundDrawable(MobileUi.surface(MobileUi.SURFACE, MobileUi.dp(this, 12).toFloat()))
+            desktops.adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, names) {
+                override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    (super.getView(position, convertView, parent) as TextView).also {
+                        MobileUi.text(it, 16f)
+                        it.setPadding(MobileUi.dp(this@MainActivity, 12), MobileUi.dp(this@MainActivity, 8),
+                            MobileUi.dp(this@MainActivity, 12), MobileUi.dp(this@MainActivity, 8))
+                    }
+                override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                    (super.getDropDownView(position, convertView, parent) as TextView).also {
+                        MobileUi.text(it, 16f)
+                        it.setBackgroundColor(MobileUi.SURFACE)
+                        val inset = MobileUi.dp(this@MainActivity, 12)
+                        it.setPadding(inset, inset, inset, inset)
+                    }
+            }.apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
             val index = it.indexOfFirst { peer -> peer.id == selected }
             if (index >= 0) desktops.setSelection(index)
             trustControls.visibility = if (it.isEmpty()) View.GONE else View.VISIBLE
