@@ -23,7 +23,7 @@ reflow.
 | Avoid overwhelming a new user | **Simple** is the default, persisted separately from capture settings. It shows preview, PC state, Start/Stop, camera, video quality, zoom and torch. |
 | Retain professional control | An explicit, persisted **Pro** mode reveals the current focus, exposure, white-balance, image, and monitoring groups plus presets. Switching presentation mode never interrupts capture. |
 | Keep streaming immediate | Camera is a dedicated home screen. A large Start/Stop action is always reachable; the preview keeps touch-focus and pinch-zoom. |
-| Separate infrequent work | Connections owns QR pairing and approved PCs. Settings & security owns key rotation, recovery and diagnostics. |
+| Separate infrequent work | Connections owns one-time code/QR pairing and trusted PCs. Settings & security owns key rotation, recovery and diagnostics. |
 | Work across available space | Portrait stacks preview and controls; landscape and wide tablets place controls beside the preview. Pages scroll at larger font scales rather than overlap. |
 | Communicate state quietly | Anthracite surfaces, electric-blue action/focus accents, green connected state, and red only for stop or critical failure. Short inline feedback replaces routine modal interruption. |
 | Preserve accessibility | Text accompanies Simple-mode icons; controls are at least 48 dp high, descriptive, high-contrast, and retain all existing keyboard/screen-reader labels. |

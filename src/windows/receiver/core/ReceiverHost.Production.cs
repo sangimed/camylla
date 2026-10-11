@@ -1,4 +1,5 @@
 using System.Net.Security;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
@@ -10,6 +11,27 @@ namespace Camylla.Receiver;
 
 public sealed partial class ReceiverHost
 {
+    private async Task RespondToPairDiscoveryAsync(CancellationToken ct)
+    {
+        if (Trust == null || DiscoveryPort == 0) return;
+        using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, DiscoveryPort));
+        while (!ct.IsCancellationRequested)
+        {
+            UdpReceiveResult packet;
+            try { packet = await udp.ReceiveAsync(ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            var request = System.Text.Encoding.ASCII.GetString(packet.Buffer);
+            const string prefix = "CAMYLLA_PAIR_DISCOVER_V3|";
+            if (!request.StartsWith(prefix, StringComparison.Ordinal) || request.Length != prefix.Length + 32 || Trust == null) continue;
+            var nonce = request[prefix.Length..];
+            var proof = Trust.CreatePairDiscoveryProof(nonce, ControlPort);
+            if (proof == null) continue;
+            var fields = JsonSerializer.SerializeToElement(proof);
+            var response = System.Text.Encoding.ASCII.GetBytes($"CAMYLLA_PAIR_V3|{fields.GetProperty("nonce").GetString()}|{fields.GetProperty("desktop_id").GetString()}|{ControlPort}|{fields.GetProperty("name").GetString()}|{fields.GetProperty("salt").GetString()}|{fields.GetProperty("proof").GetString()}");
+            await udp.SendAsync(response, packet.RemoteEndPoint, ct);
+        }
+    }
+
     private sealed class ProductionSession(Session session, string phoneId, string clientNonce)
     {
         public Session Session { get; } = session;
@@ -100,10 +122,16 @@ public sealed partial class ReceiverHost
                 var type = Wire.RequiredString(value, "type");
                 if (phoneId == null)
                 {
-                    if (type != "pair_init") throw new AuthenticationException("pair_rejected");
                     var address = ((System.Net.IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
-                    var challenge = Trust!.BeginChallenge(value, address);
-                    Report("v3 pairing challenge issued; automatic certificate proof pending");
+                    if (type == "pair_probe")
+                    {
+                        V3Record.Require(value, "pair_probe");
+                        await Wire.WriteControlAsync(tls, Trust!.ProbePairingIdentity(address), ct);
+                        return;
+                    }
+                    if (type is not ("pair_init" or "pair_code_init")) throw new AuthenticationException("pair_rejected");
+                    var challenge = type == "pair_init" ? Trust!.BeginChallenge(value, address) : Trust!.BeginCodeChallenge(value, address);
+                    Report(type == "pair_init" ? "v3 QR pairing challenge issued" : "v3 code pairing challenge issued; PC approval pending");
                     await Wire.WriteControlAsync(tls, challenge, ct);
                     return;
                 }

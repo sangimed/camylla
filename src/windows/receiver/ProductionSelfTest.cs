@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 
 internal static partial class ProductionSelfTest
@@ -17,6 +18,42 @@ internal static partial class ProductionSelfTest
         using var phone = TestIdentity("Test phone");
         var phoneId = ProductionTrust.PeerId(phone);
         using var other = TestIdentity("Untrusted");
+        using (var coded = new ProductionTrust(Path.Combine(directory, "code-pairing")))
+        {
+            var invite = coded.BeginInvitation("127.0.0.1");
+            Check(invite.Code.Length == 8 && invite.Code.All(c => c is >= '0' and <= '9'),
+                "pairing code is eight cryptographically generated digits");
+            var discoveryNonce = "00112233445566778899aabbccddeeff";
+            using (var proof = JsonDocument.Parse(JsonSerializer.Serialize(coded.CreatePairDiscoveryProof(discoveryNonce, 58413))))
+            {
+                var fields = proof.RootElement;
+                var salt = Convert.FromHexString(fields.GetProperty("salt").GetString()!);
+                var key = Rfc2898DeriveBytes.Pbkdf2(Encoding.ASCII.GetBytes(invite.Code), salt, 600_000, HashAlgorithmName.SHA256, 32);
+                var name = fields.GetProperty("name").GetString();
+                var data = Encoding.ASCII.GetBytes($"{discoveryNonce}|{fields.GetProperty("desktop_id").GetString()}|58413|{name}");
+                var expected = HMACSHA256.HashData(key, data);
+                Check(CryptographicOperations.FixedTimeEquals(expected, Convert.FromHexString(fields.GetProperty("proof").GetString()!)),
+                    "LAN discovery proof authenticates the code, nonce and desktop identity");
+            }
+            var wrongCode = invite.Code == "00000000" ? "11111111" : "00000000";
+            var wrongInit = JsonSerializer.SerializeToElement(new { type = "pair_code_init", version = 3, code = wrongCode,
+                phone_id = phoneId, client_cert = Convert.ToBase64String(phone.RawData), name = "Code paired phone" });
+            try { coded.BeginCodeChallenge(wrongInit, "127.0.0.1"); throw new Exception("Incorrect pairing code accepted"); }
+            catch (AuthenticationException) { }
+            Check(coded.PairingOpen, "incorrect code does not consume the active invitation");
+            var init = JsonSerializer.SerializeToElement(new { type = "pair_code_init", version = 3, code = invite.Code,
+                phone_id = phoneId, client_cert = Convert.ToBase64String(phone.RawData), name = "Code paired phone" });
+            coded.BeginCodeChallenge(init, "127.0.0.1");
+            var candidate = coded.Candidate!;
+            Check(candidate.ReplacesId == null && !candidate.Approved, "code pairing always requires explicit PC approval");
+            try { coded.BeginCodeChallenge(init, "127.0.0.1"); throw new Exception("Pairing code replay accepted"); }
+            catch (AuthenticationException) { }
+            coded.ApprovePairChallenge(candidate.ChallengeId, true);
+            var commit = JsonSerializer.SerializeToElement(new { type = "pair_commit", version = 3,
+                pair_id = invite.PairId, challenge_id = candidate.ChallengeId });
+            coded.Commit(commit, phoneId);
+            Check(coded.IsTrusted(phoneId) && !coded.PairingOpen, "approved code pairing consumes invitation and stores trust");
+        }
         var legacy = Path.Combine(directory, "legacy-cleanup"); Directory.CreateDirectory(legacy);
         File.WriteAllText(Path.Combine(legacy, "development-secret.txt"), "test-only obsolete secret");
         File.WriteAllText(Path.Combine(legacy, "receiver-dev-identity.pfx"), "test-only obsolete identity");
@@ -44,7 +81,7 @@ internal static partial class ProductionSelfTest
             try { replacement.Commit(commit, candidate.Id); throw new Exception("Unapproved replacement accepted"); }
             catch (AuthenticationException) { }
             Check(replacement.IsTrusted(phoneId) && !replacement.IsTrusted(candidate.Id), "unapproved replacement preserves trust");
-            replacement.ApprovePairReplacement(candidate.ChallengeId, true);
+            replacement.ApprovePairChallenge(candidate.ChallengeId, true);
             string? retired = null;
             replacement.PeerRevoked += id => retired = id;
             replacement.Commit(commit, candidate.Id);
@@ -84,7 +121,7 @@ internal static partial class ProductionSelfTest
             Check(!restarted.PairingOpen && restarted.Candidate == null, "invitations/challenges never survive restart");
         }
         var controlPort = FreePort(); var videoPort = FreePort();
-        using (var retryHost = new ReceiverHost(controlPort, videoPort, trust))
+        using (var retryHost = new ReceiverHost(controlPort, videoPort, trust, 0))
         {
             var blocker = new TcpListener(IPAddress.Any, controlPort);
             blocker.Start();
@@ -101,7 +138,7 @@ internal static partial class ProductionSelfTest
             retryLifetime.Cancel();
             await retryRun;
         }
-        using var host = new ReceiverHost(controlPort, videoPort, trust);
+        using var host = new ReceiverHost(controlPort, videoPort, trust, 0);
         using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var run = host.RunAsync(lifetime.Token);
         try
@@ -127,6 +164,34 @@ internal static partial class ProductionSelfTest
                     pair_id = invite.PairId, challenge_id = challengeId }, lifetime.Token);
                 using var result = await Wire.ReadControlAsync(commit, lifetime.Token);
                 Check(Wire.RequiredString(result.RootElement, "type") == "pair_ok", "mutual TLS pairing commits trust");
+            }
+            var codeInvite = trust.BeginInvitation("127.0.0.1", controlPort);
+            using (var probe = await Connect(controlPort, trust.DesktopId, null, lifetime.Token))
+            {
+                await Wire.WriteControlAsync(probe, new { type = "pair_probe", version = 3 }, lifetime.Token);
+                using var identityReply = await Wire.ReadControlAsync(probe, lifetime.Token);
+                Check(Wire.RequiredString(identityReply.RootElement, "type") == "pair_identity" &&
+                    Wire.RequiredString(identityReply.RootElement, "desktop_id") == trust.DesktopId,
+                    "preflight reveals only the TLS-pinned desktop identity before code disclosure");
+            }
+            string codeChallenge;
+            using (var codeStart = await Connect(controlPort, trust.DesktopId, null, lifetime.Token))
+            {
+                await Wire.WriteControlAsync(codeStart, new { type = "pair_code_init", version = 3,
+                    code = codeInvite.Code, phone_id = phoneId, client_cert = Convert.ToBase64String(phone.RawData), name = "Test phone" }, lifetime.Token);
+                using var response = await Wire.ReadControlAsync(codeStart, lifetime.Token);
+                Check(Wire.RequiredString(response.RootElement, "type") == "pair_challenge" &&
+                    response.RootElement.GetProperty("requires_approval").GetBoolean(),
+                    "code pairing requires explicit desktop approval over TLS");
+                codeChallenge = Wire.RequiredString(response.RootElement, "challenge_id");
+            }
+            trust.ApprovePairChallenge(codeChallenge, true);
+            using (var codeCommit = await Connect(controlPort, trust.DesktopId, phone, lifetime.Token))
+            {
+                await Wire.WriteControlAsync(codeCommit, new { type = "pair_commit", version = 3,
+                    pair_id = codeInvite.PairId, challenge_id = codeChallenge }, lifetime.Token);
+                using var response = await Wire.ReadControlAsync(codeCommit, lifetime.Token);
+                Check(Wire.RequiredString(response.RootElement, "type") == "pair_ok", "approved code pairing commits only over mutual TLS");
             }
             using (var restored = new ProductionTrust(directory))
                 Check(restored.DesktopId == trust.DesktopId && restored.IsTrusted(phoneId), "DPAPI/CNG trust survives reload");

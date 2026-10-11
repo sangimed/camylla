@@ -57,14 +57,14 @@
         </Expander>
         <ContentDialog x:Name="PairDialog" Title="Connect your phone" CloseButtonText="Close" Closed="OnPairClosed">
             <StackPanel Spacing="12">
-                <TextBlock Text="Open Camylla on your phone and scan this QR." TextWrapping="Wrap" />
+                <TextBlock Text="On your phone, enter this one-time code. Camylla finds this PC on your local network. QR scan remains available as an alternative." TextWrapping="Wrap" />
+                <TextBlock x:Name="PairCodeText" FontSize="30" FontWeight="SemiBold" CharacterSpacing="160" />
                 <Image x:Name="PairQr" Width="280" Height="280" />
                 <TextBlock x:Name="PairStatus" TextWrapping="Wrap" />
-                <Button Content="Refresh QR" Click="OnPair" />
+                <Button Content="Create new pairing code and QR" Click="OnPair" />
                 <Expander Header="Connection options">
                     <StackPanel Spacing="8">
                         <TextBox x:Name="LanAddressBox" Header="PC LAN address" />
-                        <TextBlock x:Name="DesktopFingerprint" TextWrapping="Wrap" />
                         <TextBox x:Name="InvitationBox" Header="Manual invitation" IsReadOnly="True" TextWrapping="Wrap" />
                         <TextBlock x:Name="CandidateText" TextWrapping="Wrap" />
                     </StackPanel>

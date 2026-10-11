@@ -20,9 +20,9 @@ internal static class FirewallStatus
                     var enabled = Convert.ToBoolean(policy.GetType().InvokeMember("FirewallEnabled", BindingFlags.GetProperty, null, policy, [flag]));
                     states.Add($"{name}: {(enabled ? "enabled" : "disabled")}");
                 }
-            return "Windows Firewall " + string.Join(", ", states) + ". Allow Camylla on the private network for ports 58413 and 58414.";
+            return "Windows Firewall " + string.Join(", ", states) + ". Allow Camylla on the private network for TCP ports 58413 and 58414 and UDP port 41415.";
         }
-        catch (Exception) { return "Windows Firewall status unavailable. Check private-network access to ports 58413 and 58414."; }
+        catch (Exception) { return "Windows Firewall status unavailable. Check private-network access to TCP ports 58413 and 58414 and UDP port 41415."; }
         finally { if (policy != null && Marshal.IsComObject(policy)) Marshal.FinalReleaseComObject(policy); }
     }
 }

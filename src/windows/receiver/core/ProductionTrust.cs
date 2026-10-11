@@ -12,7 +12,7 @@ using System.Text.Json;
 namespace Camylla.Receiver;
 
 public sealed record TrustedPhone(string Id, string Name, string Certificate, bool Revoked, DateTimeOffset Updated);
-public sealed record PairInvitation(string Uri, string PairId, DateTimeOffset Expires, string DesktopId);
+public sealed record PairInvitation(string Uri, string PairId, DateTimeOffset Expires, string DesktopId, string Code);
 public sealed record PairCandidate(string Id, string Name, string ChallengeId, DateTimeOffset Expires,
     string? ReplacesId, bool Approved);
 
@@ -31,7 +31,7 @@ public sealed partial class ProductionTrust : IDisposable
     private string? completedPairId;
     private readonly Dictionary<string, Queue<long>> attempts = new();
     private readonly Queue<long> globalAttempts = new();
-    private sealed record Invitation(string Id, byte[] Hash, DateTimeOffset Expires, long Created);
+    private sealed record Invitation(string Id, byte[] Hash, byte[] CodeHash, byte[] CodeSalt, byte[] CodeProofKey, DateTimeOffset Expires, long Created);
     private sealed record Challenge(string PairId, string Id, string PhoneId, string Name,
         string Certificate, long Created, string? ReplacesId, bool Approved);
 
@@ -74,6 +74,20 @@ public sealed partial class ProductionTrust : IDisposable
     internal TimeProvider TestClock => clock;
     public string DesktopId { get { lock (gate) return PeerId(certificate); } }
     public string DesktopName { get { lock (gate) return database.Name; } }
+    internal object? CreatePairDiscoveryProof(string nonce, int port)
+    {
+        if (nonce.Length != 32 || nonce.Any(c => !Uri.IsHexDigit(c)) || port is < 1 or > 65535) return null;
+        lock (gate)
+        {
+            var current = ValidInvitation();
+            if (current == null) return null;
+            var id = DesktopId;
+            var name = Convert.ToBase64String(Encoding.UTF8.GetBytes(database.Name));
+            var data = Encoding.ASCII.GetBytes($"{nonce}|{id}|{port}|{name}");
+            var proof = Convert.ToHexStringLower(HMACSHA256.HashData(current.CodeProofKey, data));
+            return new { nonce, desktop_id = id, port, name, salt = Convert.ToHexStringLower(current.CodeSalt), proof };
+        }
+    }
     public IReadOnlyList<TrustedPhone> Phones { get { lock (gate) return database.Phones.ToArray(); } }
     public PairCandidate? Candidate
     {
@@ -84,30 +98,58 @@ public sealed partial class ProductionTrust : IDisposable
     public event Action<string>? PeerRevoked;
     public string? CompletedPairId { get { lock (gate) return completedPairId; } }
 
+    internal object ProbePairingIdentity(string address)
+    {
+        lock (gate)
+        {
+            LimitAttempts(address);
+            if (ValidInvitation() == null) throw new AuthenticationException("pair_rejected");
+            return new { type = "pair_identity", version = 3, desktop_id = DesktopId, name = database.Name };
+        }
+    }
+
     public PairInvitation BeginInvitation(string host, int port = 58413)
     {
         ValidateHost(host);
         if (port is < 1 or > 65535) throw new ArgumentException("Invalid control port");
         var cap = RandomHex(32);
         var id = RandomHex(16);
+        var code = NewPairCode();
+        var codeSalt = RandomNumberGenerator.GetBytes(16);
+        var codeProofKey = Rfc2898DeriveBytes.Pbkdf2(Encoding.ASCII.GetBytes(code), codeSalt, 600_000, HashAlgorithmName.SHA256, 32);
         var expires = clock.GetUtcNow().AddSeconds(120);
         lock (gate)
         {
             if (ValidRotation() != null) throw new AuthenticationException("session_busy");
-            invitation = new(id, SHA256.HashData(Convert.FromHexString(cap)), expires, clock.GetTimestamp());
+            ClearInvitation();
+            invitation = new(id, SHA256.HashData(Convert.FromHexString(cap)), SHA256.HashData(Encoding.ASCII.GetBytes(code)), codeSalt, codeProofKey, expires, clock.GetTimestamp());
             challenge = null;
         }
         var uri = $"camylla-pair://v3?host={Uri.EscapeDataString(host)}&control_port={port}&desktop_id={DesktopId}&pair_id={id}&cap={cap}&expires_at={expires.ToUnixTimeSeconds()}";
         if (Encoding.UTF8.GetByteCount(uri) > 512) { CancelInvitation(); throw new ArgumentException("Invitation too large"); }
-        return new(uri, id, expires, DesktopId);
+        return new(uri, id, expires, DesktopId, code);
     }
-    public void CancelInvitation() { lock (gate) { invitation = null; challenge = null; } }
+    public void CancelInvitation() { lock (gate) { ClearInvitation(); challenge = null; } }
     internal object BeginChallenge(JsonElement value, string address)
     {
         lock (gate) LimitAttempts(address);
         V3Record.Require(value, "pair_init", "pair_id", "cap", "phone_id", "client_cert", "name");
         var pairId = V3Record.Hex(value, "pair_id", 16);
         var cap = V3Record.Hex(value, "cap", 32);
+        return BeginChallengeCore(value, invite => invite.Id == pairId &&
+            CryptographicOperations.FixedTimeEquals(invite.Hash, SHA256.HashData(Convert.FromHexString(cap))), false);
+    }
+    internal object BeginCodeChallenge(JsonElement value, string address)
+    {
+        lock (gate) LimitAttempts(address);
+        V3Record.Require(value, "pair_code_init", "code", "phone_id", "client_cert", "name");
+        var code = Wire.RequiredString(value, "code");
+        if (!ValidPairCode(code)) throw new AuthenticationException("pair_rejected");
+        var hash = SHA256.HashData(Encoding.ASCII.GetBytes(code));
+        return BeginChallengeCore(value, invite => CryptographicOperations.FixedTimeEquals(invite.CodeHash, hash), true);
+    }
+    private object BeginChallengeCore(JsonElement value, Func<Invitation, bool> matches, bool requireApproval)
+    {
         var phoneId = V3Record.Hex(value, "phone_id", 32);
         var name = V3Record.Name(value, "name");
         var certText = V3Record.Certificate(value, "client_cert");
@@ -118,16 +160,16 @@ public sealed partial class ProductionTrust : IDisposable
         {
             if (ValidRotation() != null) throw new AuthenticationException("session_busy");
             var invite = ValidInvitation();
-            if (invite == null || invite.Id != pairId ||
-                !CryptographicOperations.FixedTimeEquals(invite.Hash, SHA256.HashData(Convert.FromHexString(cap))))
+            if (invite == null || !matches(invite))
                 throw new AuthenticationException("pair_rejected");
-            invitation = null; // Consume before any response, including an interrupted response.
+            var pairId = invite.Id;
+            ClearInvitation(); // Consume before any response, including an interrupted response.
             var previous = database.Phones.Any(p => p.Id == phoneId) ? null : database.Phones.Where(p => p.Id != phoneId && p.Name == name)
                 .OrderBy(p => p.Revoked).ThenByDescending(p => p.Updated).FirstOrDefault();
-            challenge = new(pairId, RandomHex(16), phoneId, name, certText, clock.GetTimestamp(), previous?.Id, previous == null);
+            challenge = new(pairId, RandomHex(16), phoneId, name, certText, clock.GetTimestamp(), previous?.Id, previous == null && !requireApproval);
             return new { type = "pair_challenge", version = 3, pair_id = pairId,
                 challenge_id = challenge.Id, server_cert = Convert.ToBase64String(certificate.RawData), name = database.Name,
-                requires_approval = previous != null, previous_phone_id = previous?.Id };
+                requires_approval = previous != null || requireApproval, previous_phone_id = previous?.Id };
         }
     }
 
@@ -167,12 +209,12 @@ public sealed partial class ProductionTrust : IDisposable
         if (replaced != null) PeerRevoked?.Invoke(replaced);
         return response;
     }
-    public void ApprovePairReplacement(string challengeId, bool approved)
+    public void ApprovePairChallenge(string challengeId, bool approved)
     {
         lock (gate)
         {
             var candidate = ValidChallenge();
-            if (candidate == null || candidate.Id != challengeId || candidate.ReplacesId == null)
+            if (candidate == null || candidate.Id != challengeId)
                 throw new AuthenticationException("pair_rejected");
             challenge = approved ? candidate with { Approved = true } : null;
         }
@@ -205,8 +247,17 @@ public sealed partial class ProductionTrust : IDisposable
 
     private Invitation? ValidInvitation()
     {
-        if (invitation != null && (clock.GetUtcNow() >= invitation.Expires || clock.GetElapsedTime(invitation.Created).TotalSeconds >= 120)) invitation = null;
+        if (invitation != null && (clock.GetUtcNow() >= invitation.Expires || clock.GetElapsedTime(invitation.Created).TotalSeconds >= 120)) ClearInvitation();
         return invitation;
+    }
+    private void ClearInvitation()
+    {
+        if (invitation is not { } current) return;
+        CryptographicOperations.ZeroMemory(current.Hash);
+        CryptographicOperations.ZeroMemory(current.CodeHash);
+        CryptographicOperations.ZeroMemory(current.CodeSalt);
+        CryptographicOperations.ZeroMemory(current.CodeProofKey);
+        invitation = null;
     }
     private Challenge? ValidChallenge()
     {
@@ -280,6 +331,8 @@ public sealed partial class ProductionTrust : IDisposable
         if (!chain.Build(cert)) throw new AuthenticationException("Invalid identity chain");
     }
     internal static string RandomHex(int bytes) => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(bytes));
+    private static string NewPairCode() => RandomNumberGenerator.GetInt32(10_000_000, 100_000_000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+    private static bool ValidPairCode(string code) => code.Length == 8 && code.All(c => c is >= '0' and <= '9');
     public static void ValidateHost(string host)
     {
         if (host.Length is 0 or > 253 || host.Any(c => c > 127 || char.IsWhiteSpace(c)) ||

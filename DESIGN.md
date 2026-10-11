@@ -28,7 +28,7 @@ not be copied.
 - **Preview first.** The camera view gives the live preview the most space. Keep
   Start/Stop obvious and reachable while controls or diagnostics are open.
 - **Separate destinations.** Camera is the frequent workspace; Connections owns
-  QR pairing and trusted PCs; Settings & security owns keys and diagnostics.
+  code/QR pairing and trusted PCs; Settings & security owns keys and diagnostics.
 - **Adapt the composition.** Portrait places the preview above controls.
   Landscape and wide tablet windows place the preview beside a supporting
   controls panel. Reflow content for available space and font scale; do not just
@@ -98,6 +98,11 @@ pairs instead of hard-coded text colors where a theme surface is involved.
 - Connection and camera capability text must reflect observed device state.
   Never imply a control is available or applied merely because a request was
   sent.
+- Pairing opens on an eight-digit, one-use code; scanning the QR remains an
+  alternative. Code entry is a single numeric field with Android's numeric
+  keypad. The phone discovers ready Camylla PCs on the local network; if there
+  is more than one, the user chooses by PC name. The PC user explicitly approves
+  each code pairing. Neither pairing method starts capture.
 
 ## Design references and source documents
 

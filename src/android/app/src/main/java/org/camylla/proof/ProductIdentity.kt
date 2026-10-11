@@ -135,6 +135,34 @@ class ProductIdentity(private val context: Context, requestedAlias: String? = nu
     val certificate: X509Certificate get() = store.getCertificate(alias) as X509Certificate
     val phoneId: String get() = peerId(certificate)
     val privateKeyNonexportable: Boolean get() = store.getKey(alias, null).encoded == null
+    fun inspectDesktopIdentity(host: String, port: Int = 58413): String {
+        PairInvitation.validateHost(host)
+        val trust = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = throw CertificateException("Not a client")
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                validateCertificate(chain?.firstOrNull() ?: throw CertificateException("Missing desktop identity"), false)
+            }
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        val context = SSLContext.getInstance("TLSv1.3").apply { init(null, arrayOf<TrustManager>(trust), SecureRandom()) }
+        Socket().use { plain ->
+            plain.connect(InetSocketAddress(host, port), 1500)
+            (context.socketFactory.createSocket(plain, host, port, true) as SSLSocket).use { socket ->
+                socket.apply {
+                    enabledProtocols = arrayOf("TLSv1.3"); soTimeout = 1500; startHandshake()
+                    require(session.protocol == "TLSv1.3") { "TLS 1.3 unavailable" }
+                    val desktop = session.peerCertificates.firstOrNull() as? X509Certificate
+                        ?: throw CertificateException("Missing desktop identity")
+                    val desktopId = peerId(desktop)
+                    M4Wire.writeControl(outputStream, JSONObject().put("type", "pair_probe").put("version", 3).toString())
+                    val reply = JSONObject(M4Wire.readControl(inputStream))
+                    M4Wire.record(reply, "pair_identity", "desktop_id", "name")
+                    require(reply.getString("desktop_id") == desktopId) { "Desktop identity mismatch" }
+                    return desktopId
+                }
+            }
+        }
+    }
     fun socket(host: String, port: Int, desktopId: String, mutual: Boolean = true): SSLSocket {
         PairInvitation.validateHost(host)
         val trust = object : X509TrustManager {

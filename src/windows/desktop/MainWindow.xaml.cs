@@ -33,7 +33,6 @@ public sealed partial class MainWindow : Window
         cameraPublisher = new CameraPipePublisher(receiver);
         cameraPublisher.Start();
         LanAddressBox.Text = ProductionTrust.LanAddress();
-        DesktopFingerprint.Text = $"Desktop fingerprint: {receiver.Trust!.DesktopId}";
         LegacyCleanupButton.Visibility = LegacyMigration.CredentialsPresent ? Visibility.Visible : Visibility.Collapsed;
         try
         {

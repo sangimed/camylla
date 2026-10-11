@@ -29,6 +29,7 @@ public sealed partial class MainWindow
             }
             invitation = receiver.Trust!.BeginInvitation(LanAddressBox.Text.Trim());
             displayedPairId = invitation.PairId;
+            PairCodeText.Text = string.Join(" ", invitation.Code.Chunk(4).Select(chars => new string(chars)));
             InvitationBox.Text = invitation.Uri;
             using var generator = new QRCodeGenerator();
             using var data = generator.CreateQrCode(invitation.Uri, QRCodeGenerator.ECCLevel.M);
@@ -38,8 +39,8 @@ public sealed partial class MainWindow
             using var stream = new MemoryStream(png).AsRandomAccessStream();
             await bitmap.SetSourceAsync(stream);
             PairQr.Source = bitmap;
-            PairStatus.Text = "Invitation valid for 120 seconds. Scanning does not start capture.";
-            ConnectionHelp.Text = $"Listening on {LanAddressBox.Text}:58413 and :58414. {FirewallStatus.Describe()}";
+            PairStatus.Text = "Code and QR valid for 120 seconds. The PC will ask you to approve code pairings. Pairing never starts capture.";
+            ConnectionHelp.Text = $"Ready for local pairing discovery. {FirewallStatus.Describe()}";
             if (!pairDialogShowing)
             {
                 pairDialogShowing = true;
@@ -50,22 +51,21 @@ public sealed partial class MainWindow
         }
         catch (Exception)
         {
-            receiver.Trust!.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = "";
+            receiver.Trust!.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = ""; PairCodeText.Text = "";
             PairStatus.Text = "Cannot create an invitation. Check the PC LAN address and protected identity.";
         }
     }
     private void OnPairClosed(object sender, object args)
     {
-        if (pairingReviewTransition) { invitation = null; PairQr.Source = null; InvitationBox.Text = ""; return; }
+        if (pairingReviewTransition) { invitation = null; PairQr.Source = null; InvitationBox.Text = ""; PairCodeText.Text = ""; return; }
         displayedPairId = null;
-        receiver.Trust!.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = "";
+        receiver.Trust!.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = ""; PairCodeText.Text = "";
     }
     private void UpdatePairingUi()
     {
         if (lastPairingUpdate != 0 && Stopwatch.GetElapsedTime(lastPairingUpdate).TotalMilliseconds < 500) return;
         lastPairingUpdate = Stopwatch.GetTimestamp();
         var trust = receiver.Trust!;
-        DesktopFingerprint.Text = $"Desktop fingerprint: {trust.DesktopId}";
         UpdateRotationUi();
         if (pairDialogShowing && displayedPairId != null && trust.CompletedPairId == displayedPairId)
         {
@@ -75,9 +75,9 @@ public sealed partial class MainWindow
         var candidate = trust.Candidate;
         if (candidate != null)
         {
-            if (candidate.ReplacesId != null && !candidate.Approved && !replacementDialogShowing && reviewedReplacement != candidate.ChallengeId)
+            if (!candidate.Approved && !replacementDialogShowing && reviewedReplacement != candidate.ChallengeId)
                 _ = ReviewReplacementAsync(candidate);
-            invitation = null; PairQr.Source = null; InvitationBox.Text = "";
+            invitation = null; PairQr.Source = null; InvitationBox.Text = ""; PairCodeText.Text = "";
             CandidateText.Text = $"Phone: {candidate.Name}\nFingerprint: {candidate.Id}\nChallenge expires at {candidate.Expires.LocalDateTime:T}";
             PairStatus.Text = "Finishing secure pairing automatically…";
         }
@@ -86,7 +86,7 @@ public sealed partial class MainWindow
             CandidateText.Text = "";
             if (invitation != null && DateTimeOffset.UtcNow >= invitation.Expires)
             {
-                trust.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = "";
+                trust.CancelInvitation(); invitation = null; PairQr.Source = null; InvitationBox.Text = ""; PairCodeText.Text = "";
                 PairStatus.Text = "Invitation expired. Create a fresh invitation.";
             }
         }
@@ -122,11 +122,13 @@ public sealed partial class MainWindow
             var dialog = new ContentDialog
             {
                 XamlRoot = ((FrameworkElement)Content).XamlRoot,
-                Title = "Replace this phone's identity?",
-                Content = $"Phone: {candidate.Name}\n\nPrevious fingerprint:\n{candidate.ReplacesId}\n\nNew fingerprint:\n{candidate.Id}\n\nApprove only if you requested this change. The previous identity will be revoked.",
-                PrimaryButtonText = "Approve replacement", CloseButtonText = "Cancel"
+                Title = candidate.ReplacesId == null ? "Approve phone pairing?" : "Replace this phone's identity?",
+                Content = candidate.ReplacesId == null
+                    ? $"Phone: {candidate.Name}\nFingerprint: {candidate.Id}\n\nApprove only if you just entered the pairing code on this phone."
+                    : $"Phone: {candidate.Name}\n\nPrevious fingerprint:\n{candidate.ReplacesId}\n\nNew fingerprint:\n{candidate.Id}\n\nApprove only if you requested this change. The previous identity will be revoked.",
+                PrimaryButtonText = candidate.ReplacesId == null ? "Approve pairing" : "Approve replacement", CloseButtonText = "Cancel"
             };
-            receiver.Trust!.ApprovePairReplacement(candidate.ChallengeId, await dialog.ShowAsync() == ContentDialogResult.Primary);
+            receiver.Trust!.ApprovePairChallenge(candidate.ChallengeId, await dialog.ShowAsync() == ContentDialogResult.Primary);
         }
         catch (Exception) { ConnectionHelp.Text = "Identity replacement expired or was cancelled. Try a fresh invitation."; }
         finally { pairingReviewTransition = false; replacementDialogShowing = false; }

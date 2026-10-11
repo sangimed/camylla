@@ -14,6 +14,7 @@ public sealed partial class ReceiverHost : IDisposable
 {
     private readonly int ControlPort;
     private readonly int VideoPort;
+    private readonly int DiscoveryPort;
     private readonly TimeSpan ControlIdleTimeout = TimeSpan.FromSeconds(8);
     private Session? active;
     private readonly object Gate = new();
@@ -66,15 +67,16 @@ public sealed partial class ReceiverHost : IDisposable
     public event Action<string>? Log;
 
     public ProductionTrust? Trust { get; }
-    public ReceiverHost(int controlPort = 58413, int videoPort = 58414, bool production = false)
+    public ReceiverHost(int controlPort = 58413, int videoPort = 58414, bool production = false, int discoveryPort = 41415)
     {
-        if (controlPort is < 1 or > 65535 || videoPort is < 1 or > 65535 || controlPort == videoPort)
+        if (controlPort is < 1 or > 65535 || videoPort is < 1 or > 65535 || controlPort == videoPort || discoveryPort is < 0 or > 65535)
             throw new ArgumentException("Invalid listener ports");
         ControlPort = controlPort;
         VideoPort = videoPort;
+        DiscoveryPort = discoveryPort;
         if (production) { Trust = new ProductionTrust(); Trust.PeerRevoked += RevokeSession; }
     }
-    internal ReceiverHost(int controlPort, int videoPort, ProductionTrust trust) : this(controlPort, videoPort)
+    internal ReceiverHost(int controlPort, int videoPort, ProductionTrust trust, int discoveryPort = 41415) : this(controlPort, videoPort, false, discoveryPort)
     {
         Trust = trust; Trust.PeerRevoked += RevokeSession;
     }
@@ -102,7 +104,8 @@ public sealed partial class ReceiverHost : IDisposable
             control.Start(4);
             video.Start(4);
             await Task.WhenAll(AcceptControlAsync(control, certificate, DevelopmentSecret, linked.Token),
-                AcceptVideoAsync(video, certificate, DevelopmentSecret, linked.Token));
+                AcceptVideoAsync(video, certificate, DevelopmentSecret, linked.Token),
+                RespondToPairDiscoveryAsync(linked.Token));
         }
         finally
         {

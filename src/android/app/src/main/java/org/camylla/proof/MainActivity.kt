@@ -98,7 +98,7 @@ class MainActivity : Activity() {
         if (!upgrade.getBoolean("upgrade_explained", false)) {
             val info = packageManager.getPackageInfo(packageName, 0)
             if (info.lastUpdateTime != info.firstInstallTime && runCatching { identity.desktops().none { !it.revoked } }.getOrDefault(false))
-                android.widget.Toast.makeText(this, "Connection setup has changed. Scan your PC's QR to pair again.", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(this, "Connection setup has changed. Pair your PC with a code or QR.", android.widget.Toast.LENGTH_LONG).show()
             upgrade.edit().putBoolean("upgrade_explained", true).apply()
         }
         fun dp(value: Int) = MobileUi.dp(this, value)
@@ -118,7 +118,7 @@ class MainActivity : Activity() {
         connectionStatus = TextView(this).apply { setPadding(dp(16), dp(8), dp(16), dp(8)); MobileUi.text(this, 15f, true) }
         connections.addView(TextView(this).apply { text = "Connections"; MobileUi.text(this, 24f) })
         connections.addView(TextView(this).apply { text = "Pair a PC to start your camera stream."; MobileUi.text(this, 15f, true) })
-        button(connections, "Connect a PC · Scan QR") { openPairing() }
+        button(connections, "Pair a PC") { openPairing() }
         trustControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         desktops = Spinner(this)
         trustControls.addView(desktops)
@@ -169,7 +169,7 @@ class MainActivity : Activity() {
         button(connectionManagement, "Forget this PC") {
             val peer = trustedDesktops.getOrNull(desktops.selectedItemPosition)
             if (peer != null) android.app.AlertDialog.Builder(this).setTitle("Forget ${peer.name}?")
-                .setMessage("Capture will stop. Scan its QR to connect again.")
+                .setMessage("Capture will stop. Pair again with a code or QR.")
                 .setPositiveButton("Forget") { _, _ ->
                     startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
                     runCatching { identity.revoke(peer.id); refreshDesktops() }.onFailure { showNotice("Could not save this change.") }
@@ -180,7 +180,7 @@ class MainActivity : Activity() {
         resumeKeyChange = button(layout, "Resume key change") {
             if (identity.pendingRotation != null) android.app.AlertDialog.Builder(this)
                 .setTitle("Pending security key change")
-                .setMessage("Resume to check whether the PC committed the change. If recovery is impossible, repair forgets all PCs and requires scanning a fresh QR. Capture stays stopped.")
+                .setMessage("Resume to check whether the PC committed the change. If recovery is impossible, repair forgets all PCs and requires a fresh code or QR. Capture stays stopped.")
                 .setPositiveButton("Resume") { _, _ -> openRotation("resume") }
                 .setNeutralButton("Repair pairing") { _, _ ->
                     android.app.AlertDialog.Builder(this).setTitle("Forget PCs and pair again?")
@@ -244,7 +244,7 @@ class MainActivity : Activity() {
             background = MobileUi.surface(MobileUi.SURFACE, 20f)
             addView(TextView(this@MainActivity).apply { text = "Connect your PC"; gravity = android.view.Gravity.CENTER; MobileUi.text(this, 20f) })
             addView(TextView(this@MainActivity).apply {
-                text = "Scan the QR code in Camylla for Windows to start streaming."; gravity = android.view.Gravity.CENTER
+                text = "Pair with the code shown in Camylla for Windows, or scan its QR."; gravity = android.view.Gravity.CENTER
                 setPadding(0, dp(8), 0, dp(12)); MobileUi.text(this, 15f, true)
             })
             addView(Button(this@MainActivity).apply {
@@ -505,7 +505,7 @@ class MainActivity : Activity() {
         connectionStatus.text = when {
             trustError.isNotEmpty() -> trustError
             runCatching { identity.pendingRotation != null }.getOrDefault(false) -> "Security key change pending. Resume or repair pairing before capture."
-            trustedDesktops.isEmpty() -> "Connect your PC by scanning its QR."
+            trustedDesktops.isEmpty() -> "Pair your PC with its one-time code or QR."
             else -> ConnectionStatus.message(value, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "your PC")
         }
         if (value.state == "Capturing" && value.error.isNotEmpty())

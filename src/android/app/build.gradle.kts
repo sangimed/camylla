@@ -11,8 +11,8 @@ android {
         applicationId = "org.camylla.proof"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2-pairing"
+        versionCode = 5
+        versionName = "0.5-simple-pairing"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
