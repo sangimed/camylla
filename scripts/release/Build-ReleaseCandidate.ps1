@@ -33,7 +33,8 @@ function Invoke-Checked([string]$File, [string[]]$Arguments, [string]$WorkingDir
 
 Invoke-Checked 'cmake' @('-S', $repo, '-B', $cmakeBuild, '-G', 'Visual Studio 17 2022', '-A', 'x64') $repo
 Invoke-Checked 'cmake' @('--build', $cmakeBuild, '--config', 'Release', '--parallel') $repo
-Invoke-Checked (Join-Path $repo 'src\android\gradlew.bat') @(':app:assembleRelease', "-PcamyllaVersion=$Version", "-PcamyllaVersionCode=$VersionCode", '--no-daemon') (Join-Path $repo 'src\android')
+Invoke-Checked 'ctest' @('--test-dir', $cmakeBuild, '-C', 'Release', '--output-on-failure') $repo
+Invoke-Checked (Join-Path $repo 'src\android\gradlew.bat') @(':app:testDebugUnitTest', ':app:assembleRelease', "-PcamyllaVersion=$Version", "-PcamyllaVersionCode=$VersionCode", '--no-daemon') (Join-Path $repo 'src\android')
 
 $desktop = Join-Path $stage 'windows-x64-portable'
 Invoke-Checked 'dotnet' @('publish', 'src/windows/desktop/Camylla.Desktop.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', "-p:CamyllaVersion=$Version", '-o', $desktop) $repo
