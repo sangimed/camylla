@@ -69,16 +69,18 @@ Remove the camera before deleting or moving this folder:
 
 $apk = Join-Path $repo 'src\android\app\build\outputs\apk\release\app-release-unsigned.apk'
 if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw "Required Android release APK is missing: $apk" }
-Copy-Item -LiteralPath $apk -Destination (Join-Path $stage "Camylla-$Version-android-unsigned.apk")
+$apkDestination = Join-Path $output "Camylla-$Version-android-unsigned.apk"
+Copy-Item -LiteralPath $apk -Destination $apkDestination
 
 $zip = Join-Path $output "Camylla-$Version-windows-x64-portable-unsigned.zip"
 Compress-Archive -LiteralPath $desktop -DestinationPath $zip -CompressionLevel Optimal
 
-$files = Get-ChildItem -LiteralPath $stage -Recurse -File | ForEach-Object {
+$downloadFiles = @($zip, $apkDestination)
+$files = $downloadFiles | ForEach-Object {
     [ordered]@{
-        path = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
-        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        bytes = $_.Length
+        path = [System.IO.Path]::GetFileName($_)
+        sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+        bytes = (Get-Item -LiteralPath $_).Length
     }
 }
 $manifest = [ordered]@{
@@ -89,7 +91,6 @@ $manifest = [ordered]@{
     files = $files
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'candidate-manifest.json') -Encoding utf8NoBOM
-$downloadFiles = @($zip, (Join-Path $stage "Camylla-$Version-android-unsigned.apk"))
 Get-FileHash -LiteralPath $downloadFiles -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([System.IO.Path]::GetFileName($_.Path))" } |
     Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ascii
 
