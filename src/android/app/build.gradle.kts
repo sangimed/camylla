@@ -11,8 +11,8 @@ android {
         applicationId = "org.camylla.proof"
         minSdk = 29
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.5-simple-pairing"
+        versionCode = providers.gradleProperty("camyllaVersionCode").map(String::toInt).getOrElse(5)
+        versionName = providers.gradleProperty("camyllaVersion").getOrElse("0.5-simple-pairing")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
