@@ -16,4 +16,10 @@ class PairingDiscoveryTest {
         assertFalse(PairingDiscovery.verifyCodeProof("12345679", nonce, desktopId, 58413, name, salt, proof))
         assertFalse(PairingDiscovery.verifyCodeProof("12345678", nonce.dropLast(1) + "0", desktopId, 58413, name, salt, proof))
     }
+
+    @Test fun restrictsDiscoveredDesktopNamesToProtocolBounds() {
+        assertTrue(PairingDiscovery.validDesktopName("Camylla PC"))
+        assertFalse(PairingDiscovery.validDesktopName("\u00e9".repeat(33)))
+        assertFalse(PairingDiscovery.validDesktopName("PC\u0000"))
+    }
 }

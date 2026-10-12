@@ -98,16 +98,6 @@ public sealed partial class ProductionTrust : IDisposable
     public event Action<string>? PeerRevoked;
     public string? CompletedPairId { get { lock (gate) return completedPairId; } }
 
-    internal object ProbePairingIdentity(string address)
-    {
-        lock (gate)
-        {
-            LimitAttempts(address);
-            if (ValidInvitation() == null) throw new AuthenticationException("pair_rejected");
-            return new { type = "pair_identity", version = 3, desktop_id = DesktopId, name = database.Name };
-        }
-    }
-
     public PairInvitation BeginInvitation(string host, int port = 58413)
     {
         ValidateHost(host);

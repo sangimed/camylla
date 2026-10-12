@@ -166,14 +166,6 @@ internal static partial class ProductionSelfTest
                 Check(Wire.RequiredString(result.RootElement, "type") == "pair_ok", "mutual TLS pairing commits trust");
             }
             var codeInvite = trust.BeginInvitation("127.0.0.1", controlPort);
-            using (var probe = await Connect(controlPort, trust.DesktopId, null, lifetime.Token))
-            {
-                await Wire.WriteControlAsync(probe, new { type = "pair_probe", version = 3 }, lifetime.Token);
-                using var identityReply = await Wire.ReadControlAsync(probe, lifetime.Token);
-                Check(Wire.RequiredString(identityReply.RootElement, "type") == "pair_identity" &&
-                    Wire.RequiredString(identityReply.RootElement, "desktop_id") == trust.DesktopId,
-                    "preflight reveals only the TLS-pinned desktop identity before code disclosure");
-            }
             string codeChallenge;
             using (var codeStart = await Connect(controlPort, trust.DesktopId, null, lifetime.Token))
             {

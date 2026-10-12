@@ -123,12 +123,6 @@ public sealed partial class ReceiverHost
                 if (phoneId == null)
                 {
                     var address = ((System.Net.IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
-                    if (type == "pair_probe")
-                    {
-                        V3Record.Require(value, "pair_probe");
-                        await Wire.WriteControlAsync(tls, Trust!.ProbePairingIdentity(address), ct);
-                        return;
-                    }
                     if (type is not ("pair_init" or "pair_code_init")) throw new AuthenticationException("pair_rejected");
                     var challenge = type == "pair_init" ? Trust!.BeginChallenge(value, address) : Trust!.BeginCodeChallenge(value, address);
                     Report(type == "pair_init" ? "v3 QR pairing challenge issued" : "v3 code pairing challenge issued; PC approval pending");

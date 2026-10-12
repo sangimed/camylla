@@ -52,8 +52,8 @@ object PairingDiscovery {
                 val id = fields[2].lowercase()
                 if (id.length != 64 || id.any { it !in '0'..'9' && it !in 'a'..'f' }) continue
                 val name = runCatching {
-                    String(Base64.decode(fields[4], Base64.DEFAULT), Charsets.UTF_8)
-                }.getOrNull()?.takeIf { it.isNotBlank() && it.length <= 64 && it.none(Char::isISOControl) } ?: continue
+                    java.text.Normalizer.normalize(String(Base64.decode(fields[4], Base64.DEFAULT), Charsets.UTF_8), java.text.Normalizer.Form.NFC)
+                }.getOrNull()?.takeIf(::validDesktopName) ?: continue
                 if (fields[5] in checkedSalts || checkedSalts.size >= 8) continue
                 checkedSalts.add(fields[5])
                 if (!verifyCodeProof(code, nonce, id, CONTROL_PORT, fields[4], fields[5], fields[6])) continue
@@ -62,6 +62,9 @@ object PairingDiscovery {
         }
         return found.values.toList()
     }
+
+    internal fun validDesktopName(value: String): Boolean =
+        value.toByteArray(Charsets.UTF_8).size in 1..64 && value.none(Char::isISOControl)
 
     internal fun verifyCodeProof(code: String, nonce: String, desktopId: String, port: Int,
         nameBase64: String, saltHex: String, proofHex: String): Boolean = runCatching {
