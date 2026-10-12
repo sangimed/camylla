@@ -23,16 +23,9 @@ at once. The Camera screen now has a centered **Connect your PC** card when no P
 is paired, and shows only Start while idle or Stop during capture. The navigation
 instrumentation test was updated to assert these states.
 
-Screenshots show the idle first-run UI in portrait, landscape, and 1.3× font scale:
-[portrait](evidence/android-ui-redesign-2026-10-10/portrait-verified-2.png),
-[landscape](evidence/android-ui-redesign-2026-10-10/landscape-final.png),
-[large text](evidence/android-ui-redesign-2026-10-10/large-text-final.png).
-The portrait and landscape layouts reflow without overlap; the enlarged text
-remains legible. Build, Android test APK compilation, and JVM tests pass after the
-follow-up change. The updated instrumentation test could not be run because Android
-again returned `INSTALL_FAILED_USER_RESTRICTED` while installing the test APK.
+Build, Android test APK compilation, and JVM tests pass after the follow-up change.
+The updated instrumentation test could not be run because Android again returned
+`INSTALL_FAILED_USER_RESTRICTED` while installing the test APK.
 
-The screenshot pass used the tablet's wide layout in both orientations; no separate
-phone-sized device was available. The captures are idle UI evidence only: no paired
-Windows PC or OBS stream was available, so streaming/recovery and user visual
-acceptance remain pending.
+No paired Windows PC or OBS stream was available, so streaming/recovery and user
+visual acceptance remain pending.

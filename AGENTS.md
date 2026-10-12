@@ -9,3 +9,6 @@ that has not been merged into `main` or remains unverified.
 Release consumer validation targets OBS only. There is no fixed-duration
 endurance requirement. Use focused functional and recovery checks; do not keep
 an interactive agent session waiting for an elapsed-time test.
+
+Capture screenshots or other visual evidence only with the user's explicit
+authorization. Do not create, retain, or commit captures by default.
