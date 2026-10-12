@@ -20,6 +20,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    lint {
+        // AndroidX Lifecycle's detector crashes with the Kotlin analysis API used by AGP 8.9.
+        // Keep every other release lint check enabled until the dependency/tooling mismatch is fixed.
+        disable += "NullSafeMutableLiveData"
+    }
 }
 
 dependencies {
