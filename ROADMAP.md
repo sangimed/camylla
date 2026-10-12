@@ -87,7 +87,10 @@ Tracking: [#20 — M4: Product alpha](https://github.com/sangimed/camylla/issues
 - [x] Build the focused Windows setup and preview experience.
 - [x] Add camera/mode controls and persistent settings. Implementation and user acceptance on the Xiaomi/Windows/OBS configuration are merged; see [#26](https://github.com/sangimed/camylla/issues/26).
 - [x] Deliver the expanded [#26 camera experience](https://github.com/sangimed/camylla/issues/26): mobile preview, focus/locks, torch, exposure and white-balance controls, supported advanced settings, framing aids and presets. PR #44 is merged and tested; the user confirmed natural phone/Windows/OBS proportions and working controls on the final APK. See [camera validation](docs/validation/camera-pr44-retest-2026-10-09.md) and [UX scope](docs/camera-controls-ux.md); additional hardware coverage remains in [#48](https://github.com/sangimed/camylla/issues/48).
-- [x] Add pairing and repeat-use workflows.
+- [x] Add pairing and repeat-use workflows. The default eight-digit, one-use
+  code flow—with authenticated local discovery, explicit PC approval, QR as an
+  alternative, and no capture start—has passed automated and Xiaomi/Windows
+  physical validation; see [pairing-code validation](docs/validation/pairing-code-2026-10-11.md).
 - [x] Add actionable errors and recovery states. The M4.6 implementation and Xiaomi user-run checks merged in PR #37. PR #41 adds tested recovery diagnostics and user-confirmed Xiaomi/OBS live output, source reopen, neutral outage output and automatic recovery.
 - [x] Implement delivered-quality reporting and bounded network/severe-thermal bitrate adaptation. M4.7 merged in PR #39; automated checks pass, and Xiaomi 720p30/Wi-Fi recovery evidence is recorded in [the M4.7 validation record](docs/validation/android-windows-m4-7.md).
 - [ ] Complete M4.7 physical quality validation on a representative Android phone: healthy 720p30/1080p30, observe effective bitrate reduction under controlled network pressure, and record a safely observable thermal case. The Xiaomi run confirmed recovery but did not observe the bitrate reduction; thermal remains untested. Tracking: [#40](https://github.com/sangimed/camylla/issues/40).
