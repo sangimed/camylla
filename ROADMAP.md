@@ -103,6 +103,12 @@ Additional physical acceptance remains tracked in [#38 — recovery UI matrix](h
 
 **Status:** planned
 
+- [ ] Establish the signed alpha delivery path: a protected release tag must
+  build reproducible Android and Windows candidates, produce a portable Windows
+  ZIP and a supported installer, sign and verify every shipped binary, and
+  publish hashes, SBOM and provenance. Validate fresh install, upgrade,
+  uninstall and virtual-camera registration/removal on the signed artifacts
+  before promoting beyond alpha. See the [release delivery architecture](docs/research/release-delivery-architecture-2026-10-12.md).
 - [ ] Add a second Android device to the compatibility matrix: [#48](https://github.com/sangimed/camylla/issues/48).
 - [ ] Add a Windows integrated-GPU test configuration: [#49](https://github.com/sangimed/camylla/issues/49).
 - [x] Improve transport/IPC diagnostics and record focused streaming, bounded-resource and OBS lifecycle/recovery evidence on the Xiaomi configuration. PR #41 is merged and tested; see [the recovery validation record](docs/validation/recovery-diagnostics-2026-10-08.md).
