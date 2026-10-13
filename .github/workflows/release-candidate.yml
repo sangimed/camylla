@@ -1,4 +1,4 @@
-name: Release candidate
+name: Publish alpha release
 
 on:
   workflow_dispatch:
@@ -13,13 +13,20 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: alpha-release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
   candidate:
-    name: Build unsigned release candidate
+    name: Build installable Android and portable Windows candidate
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      CAMYLLA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.CAMYLLA_ANDROID_KEYSTORE_PASSWORD }}
+      CAMYLLA_ANDROID_KEY_PASSWORD: ${{ secrets.CAMYLLA_ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,16 +51,60 @@ jobs:
           if ($versionCode -notmatch '^[1-9][0-9]*$') { throw "Invalid Android version code: $versionCode" }
           "version=$version" >> $env:GITHUB_OUTPUT
           "version_code=$versionCode" >> $env:GITHUB_OUTPUT
+      - name: Materialize Android signing key
+        shell: pwsh
+        env:
+          CAMYLLA_ANDROID_KEYSTORE_BASE64: ${{ secrets.CAMYLLA_ANDROID_KEYSTORE_BASE64 }}
+          CAMYLLA_ANDROID_KEY_ALIAS: ${{ secrets.CAMYLLA_ANDROID_KEY_ALIAS }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CAMYLLA_ANDROID_KEYSTORE_BASE64) -or [string]::IsNullOrWhiteSpace($env:CAMYLLA_ANDROID_KEY_ALIAS) -or [string]::IsNullOrWhiteSpace($env:CAMYLLA_ANDROID_KEYSTORE_PASSWORD) -or [string]::IsNullOrWhiteSpace($env:CAMYLLA_ANDROID_KEY_PASSWORD)) {
+            throw 'Android release-signing secrets are required.'
+          }
+          $keyStorePath = Join-Path $env:RUNNER_TEMP 'camylla-release.jks'
+          [System.IO.File]::WriteAllBytes($keyStorePath, [System.Convert]::FromBase64String($env:CAMYLLA_ANDROID_KEYSTORE_BASE64))
+          "CAMYLLA_ANDROID_KEYSTORE_PATH=$keyStorePath" >> $env:GITHUB_ENV
+          "CAMYLLA_ANDROID_KEY_ALIAS=$env:CAMYLLA_ANDROID_KEY_ALIAS" >> $env:GITHUB_ENV
       - name: Build candidate
         shell: pwsh
-        run: ./scripts/release/Build-ReleaseCandidate.ps1 -Version '${{ steps.release.outputs.version }}' -VersionCode '${{ steps.release.outputs.version_code }}'
-      - name: Upload unsigned candidate
+        run: ./scripts/release/Build-ReleaseCandidate.ps1 -Version '${{ steps.release.outputs.version }}' -VersionCode '${{ steps.release.outputs.version_code }}' -AndroidKeystorePath $env:CAMYLLA_ANDROID_KEYSTORE_PATH -AndroidKeyAlias $env:CAMYLLA_ANDROID_KEY_ALIAS
+      - name: Upload release candidate
         uses: actions/upload-artifact@v4
         with:
-          name: Camylla-${{ steps.release.outputs.version }}-unsigned-candidate
+          name: Camylla-${{ steps.release.outputs.version }}-candidate
           path: |
-            artifacts/release-candidate/Camylla-${{ steps.release.outputs.version }}-android-unsigned.apk
+            artifacts/release-candidate/Camylla-${{ steps.release.outputs.version }}-android.apk
             artifacts/release-candidate/Camylla-${{ steps.release.outputs.version }}-windows-x64-portable-unsigned.zip
             artifacts/release-candidate/candidate-manifest.json
             artifacts/release-candidate/SHA256SUMS
           if-no-files-found: error
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.release.outputs.version }}'
+          $tag = "v$version"
+          $releaseNotes = @"
+          ## Camylla $tag
+
+          Early alpha release for manual testing.
+
+          - Android: install `Camylla-$version-android.apk` directly after allowing the download source on the device.
+          - Windows: extract `Camylla-$version-windows-x64-portable-unsigned.zip`; Windows may display a SmartScreen warning because the binaries are intentionally unsigned.
+          - Virtual camera: run `camylla_virtual_camera_ctl.exe register --scope current-user` from an elevated PowerShell in the extracted folder; unregister it before moving or deleting that folder.
+
+          `SHA256SUMS` and `candidate-manifest.json` describe the downloadable files.
+          "@
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $releaseNotes | Set-Content -LiteralPath $notesPath -Encoding utf8NoBOM
+          if (gh release view $tag 2>$null) { throw "Release $tag already exists." }
+          & gh release create $tag `
+            "artifacts/release-candidate/Camylla-$version-android.apk" `
+            "artifacts/release-candidate/Camylla-$version-windows-x64-portable-unsigned.zip" `
+            'artifacts/release-candidate/candidate-manifest.json' `
+            'artifacts/release-candidate/SHA256SUMS' `
+            --target $env:GITHUB_SHA `
+            --prerelease `
+            --title "Camylla $tag" `
+            --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed with exit code $LASTEXITCODE." }

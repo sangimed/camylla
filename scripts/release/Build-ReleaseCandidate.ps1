@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory)]
     [ValidateRange(1, 2100000000)]
     [int]$VersionCode,
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\..\artifacts\release-candidate')
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\..\artifacts\release-candidate'),
+    [string]$AndroidKeystorePath,
+    [string]$AndroidKeyAlias
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +31,15 @@ function Invoke-Checked([string]$File, [string[]]$Arguments, [string]$WorkingDir
         if ($LASTEXITCODE -ne 0) { throw "$File failed with exit code $LASTEXITCODE" }
     }
     finally { Pop-Location }
+}
+
+$androidSigningValues = @($AndroidKeystorePath, $AndroidKeyAlias, $env:CAMYLLA_ANDROID_KEYSTORE_PASSWORD, $env:CAMYLLA_ANDROID_KEY_PASSWORD)
+$signAndroid = $androidSigningValues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+if ($signAndroid.Count -ne 0 -and $signAndroid.Count -ne $androidSigningValues.Count) {
+    throw 'Android signing requires a keystore path, key alias, keystore password, and key password.'
+}
+if ($signAndroid.Count -eq $androidSigningValues.Count -and -not (Test-Path -LiteralPath $AndroidKeystorePath -PathType Leaf)) {
+    throw "Android signing keystore is missing: $AndroidKeystorePath"
 }
 
 Invoke-Checked 'cmake' @('-S', $repo, '-B', $cmakeBuild, '-G', 'Visual Studio 17 2022', '-A', 'x64') $repo
@@ -69,8 +80,18 @@ Remove the camera before deleting or moving this folder:
 
 $apk = Join-Path $repo 'src\android\app\build\outputs\apk\release\app-release-unsigned.apk'
 if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) { throw "Required Android release APK is missing: $apk" }
-$apkDestination = Join-Path $output "Camylla-$Version-android-unsigned.apk"
-Copy-Item -LiteralPath $apk -Destination $apkDestination
+$apkName = if ($signAndroid.Count -eq $androidSigningValues.Count) { "Camylla-$Version-android.apk" } else { "Camylla-$Version-android-unsigned.apk" }
+$apkDestination = Join-Path $output $apkName
+if ($signAndroid.Count -eq $androidSigningValues.Count) {
+    $buildTools = Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools') -Directory | Sort-Object Name -Descending
+    $apksigner = $buildTools | ForEach-Object { Join-Path $_.FullName 'apksigner.bat' } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $apksigner) { throw 'Android SDK apksigner was not found.' }
+    Invoke-Checked $apksigner @('sign', '--v4-signing-enabled', 'false', '--ks', $AndroidKeystorePath, '--ks-key-alias', $AndroidKeyAlias, '--ks-pass', 'env:CAMYLLA_ANDROID_KEYSTORE_PASSWORD', '--key-pass', 'env:CAMYLLA_ANDROID_KEY_PASSWORD', '--out', $apkDestination, $apk) $repo
+    Invoke-Checked $apksigner @('verify', '--verbose', $apkDestination) $repo
+}
+else {
+    Copy-Item -LiteralPath $apk -Destination $apkDestination
+}
 
 $zip = Join-Path $output "Camylla-$Version-windows-x64-portable-unsigned.zip"
 Compress-Archive -LiteralPath $desktop -DestinationPath $zip -CompressionLevel Optimal
@@ -87,11 +108,11 @@ $manifest = [ordered]@{
     version = $Version
     version_code = $VersionCode
     commit = (& git -C $repo rev-parse HEAD).Trim()
-    signed = $false
+    signed = ($signAndroid.Count -eq $androidSigningValues.Count)
     files = $files
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'candidate-manifest.json') -Encoding utf8NoBOM
 Get-FileHash -LiteralPath $downloadFiles -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([System.IO.Path]::GetFileName($_.Path))" } |
     Set-Content -LiteralPath (Join-Path $output 'SHA256SUMS') -Encoding ascii
 
-Write-Host "Unsigned release candidate created in $output"
+Write-Host "Release candidate created in $output"
