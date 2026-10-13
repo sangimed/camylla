@@ -63,8 +63,8 @@ foreach ($file in $nativeFiles) {
 @"
 # Camylla portable build
 
-This folder is an unsigned release candidate. It is not a supported public
-release until the release workflow has signed and verified every binary.
+This folder is an unsigned portable alpha build. Windows may display a
+SmartScreen warning because the binaries are intentionally unsigned.
 
 Run Camylla.Desktop.exe from this folder. Do not move or delete this folder
 while its virtual camera is registered. The virtual camera is optional but its
@@ -96,7 +96,15 @@ else {
 $zip = Join-Path $output "Camylla-$Version-windows-x64-portable-unsigned.zip"
 Compress-Archive -LiteralPath $desktop -DestinationPath $zip -CompressionLevel Optimal
 
-$downloadFiles = @($zip, $apkDestination)
+$installerScript = Join-Path $repo 'scripts\release\CamyllaInstaller.iss'
+if (-not (Test-Path -LiteralPath $installerScript -PathType Leaf)) { throw "Installer script is missing: $installerScript" }
+$iscc = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source
+if (-not $iscc) { throw 'Inno Setup Compiler (ISCC.exe) is required to build the Windows installer.' }
+$setup = Join-Path $output "Camylla-$Version-windows-x64-setup-unsigned.exe"
+Invoke-Checked $iscc @("/DMyAppVersion=$Version", "/DMySourceDir=$desktop", "/DMyOutputDir=$output", $installerScript) $repo
+if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw "Required Windows installer is missing: $setup" }
+
+$downloadFiles = @($setup, $zip, $apkDestination)
 $files = $downloadFiles | ForEach-Object {
     [ordered]@{
         path = [System.IO.Path]::GetFileName($_)

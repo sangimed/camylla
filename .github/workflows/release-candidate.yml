@@ -41,6 +41,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
       - name: Resolve version
         id: release
         shell: pwsh
@@ -73,6 +76,7 @@ jobs:
           name: Camylla-${{ steps.release.outputs.version }}-candidate
           path: |
             artifacts/release-candidate/Camylla-${{ steps.release.outputs.version }}-android.apk
+            artifacts/release-candidate/Camylla-${{ steps.release.outputs.version }}-windows-x64-setup-unsigned.exe
             artifacts/release-candidate/Camylla-${{ steps.release.outputs.version }}-windows-x64-portable-unsigned.zip
             artifacts/release-candidate/candidate-manifest.json
             artifacts/release-candidate/SHA256SUMS
@@ -90,8 +94,8 @@ jobs:
           Early alpha release for manual testing.
 
           - Android: install `Camylla-$version-android.apk` directly after allowing the download source on the device.
-          - Windows: extract `Camylla-$version-windows-x64-portable-unsigned.zip`; Windows may display a SmartScreen warning because the binaries are intentionally unsigned.
-          - Virtual camera: run `camylla_virtual_camera_ctl.exe register --scope current-user` from an elevated PowerShell in the extracted folder; unregister it before moving or deleting that folder.
+          - Windows: run `Camylla-$version-windows-x64-setup-unsigned.exe` to install Camylla, its virtual camera, and its uninstaller. The installer requires elevation and Windows may display a SmartScreen warning because the binaries are intentionally unsigned.
+          - Portable Windows: `Camylla-$version-windows-x64-portable-unsigned.zip` remains available for advanced users who prefer manual installation.
 
           `SHA256SUMS` and `candidate-manifest.json` describe the downloadable files.
           "@
@@ -100,6 +104,7 @@ jobs:
           if (gh release view $tag 2>$null) { throw "Release $tag already exists." }
           & gh release create $tag `
             "artifacts/release-candidate/Camylla-$version-android.apk" `
+            "artifacts/release-candidate/Camylla-$version-windows-x64-setup-unsigned.exe" `
             "artifacts/release-candidate/Camylla-$version-windows-x64-portable-unsigned.zip" `
             'artifacts/release-candidate/candidate-manifest.json' `
             'artifacts/release-candidate/SHA256SUMS' `
