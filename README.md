@@ -2,7 +2,7 @@
 
 Camylla aims to turn an Android phone into a webcam for Windows video meetings, with a standalone desktop app and a local Wi-Fi connection.
 
-**Status: early implementation.** M1 Windows virtual-camera, M2 S21 Ultra CameraX/MediaCodec, and M3 physical authenticated transport/decode feasibility proofs are recorded. M4 product alpha is current. There is no polished desktop application, installer, or release.
+**Status: alpha.** M1 Windows virtual-camera, M2 S21 Ultra CameraX/MediaCodec, and M3 physical authenticated transport/decode feasibility proofs are recorded. M4 product alpha is current. Installable alpha builds are available, but they are not yet a stable release.
 
 ## Planned experience
 
@@ -26,6 +26,44 @@ The goal is a free, fully open-source webcam without accounts, ads, telemetry, w
 | Frame rate | Reliable 30 FPS; optional 60 FPS when supported and sustainable |
 
 Audio, USB connections, Windows 10, Windows ARM64, recording, and multiple-phone composition are deferred. Camylla is intended to work as a standalone Windows webcam without requiring an OBS installation.
+
+## Install Camylla (alpha)
+
+Use this guide to try Camylla with a Windows 11 x64 PC and an Android 10 or
+newer phone on the same local Wi-Fi network. This is an early alpha: **OBS is
+the only consumer application validated so far**. There is no audio support,
+and Windows 10, Windows on ARM, USB, recording, and multiple phones are not
+supported.
+
+1. Open the [Camylla releases page](https://github.com/sangimed/camylla/releases)
+   and download the latest alpha's Windows installer
+   (`Camylla-*-windows-x64-setup-unsigned.exe`) and Android APK
+   (`Camylla-*-android.apk`). You can compare the downloaded files with the
+   accompanying `SHA256SUMS` file before opening them.
+2. On Windows, run the installer. It requests administrator approval because
+   it registers the Camylla virtual camera. Current alpha binaries are
+   unsigned, so Windows may show a security or SmartScreen warning; install
+   only a file downloaded from the project's release page. Leave the option to
+   launch Camylla selected, or open **Camylla** from the Start menu afterwards.
+3. On Android, open the downloaded APK and allow installation from the app you
+   used to download it if Android asks. Open Camylla and grant its camera
+   permission when requested.
+4. In Camylla for Windows, select **Pair a phone**. On the phone, choose
+   **Connect a PC** and enter the eight-digit code displayed on Windows, or
+   scan its QR code. Confirm the pairing request on Windows. Pairing alone
+   does not start the camera.
+5. On the phone, choose a camera and video mode if needed, then select
+   **Start camera**. In OBS, add or select a video-capture device and choose
+   **Camylla**. Stop the session from the phone when you are done.
+
+### Remove or recover
+
+- Uninstall Camylla from **Installed apps** in Windows. The uninstaller removes
+  the virtual camera before deleting the application files.
+- If the phone cannot connect, confirm both devices are on the same local
+  Wi-Fi network, stop capture, then pair again with a new code or QR code.
+- The portable ZIP is intended for advanced testing only. Do not move or
+  delete its extracted folder while its virtual camera remains registered.
 
 ## Proposed architecture
 
