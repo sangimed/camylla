@@ -11,6 +11,8 @@ import android.os.SystemClock
 import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -52,16 +54,38 @@ class SleepSessionTest {
                     .setAction(CaptureService.ACTION_START).putExtra(CaptureService.EXTRA_PEER, peer.id))
             }
             await("Initial camera capture: ${service.stats()}") { service.stats().state == "Capturing" }
+            val keepScreenOn = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            await("Active capture did not enable keep-screen-on") {
+                activity.window.attributes.flags and keepScreenOn != 0
+            }
+            instrumentation.runOnMainSync { activity.recreate() }
+            await("Recreated activity did not restore keep-screen-on for the active session") {
+                resumedMainActivity(instrumentation)?.window?.attributes?.flags?.and(keepScreenOn) != 0
+            }
+            val activeActivity = resumedMainActivity(instrumentation)!!
+            val originalTimeout = shellOutput("settings get system screen_off_timeout").trim()
+            assertTrue("Could not read emulator screen timeout", originalTimeout.toLongOrNull() != null)
+            shell("settings put system screen_off_timeout 3000")
+            try {
+                SystemClock.sleep(4_000)
+                assertTrue("Active capture should prevent normal screen timeout", context
+                    .getSystemService(PowerManager::class.java).isInteractive)
+            } finally {
+                shell("settings put system screen_off_timeout $originalTimeout")
+            }
             val authorization = field(service, "captureAuthorization")
             val sender = field(service, "networkSender")
             val firstGeneration = service.cameraStatus.generation
             assertNotEquals("", authorization)
             val wakeLock = runCatching { field(service, "captureWakeLock") as? PowerManager.WakeLock }.getOrNull()
             assertTrue("The active session must keep its CPU/network work awake with the screen off", wakeLock?.isHeld == true)
-            shell("input keyevent 223")
-            // CameraDevice.onDisconnected reaches this exact callback on hardware that
-            // evicts a locked camera. Do not depend on an emulator's eviction policy.
             val engine = field(service, "engine")!!
+            shell("input keyevent 223")
+            await("Screen-off transition was not observed") { field(service, "cameraInterruptedByLock") == true }
+            shell("input keyevent 224")
+            shell("wm dismiss-keyguard")
+            // Deliver the Camera2 error after unlock to cover callbacks delayed by the
+            // camera service while the device was locked.
             CameraEngine::class.java.getDeclaredMethod("fatal", String::class.java).apply { isAccessible = true }
                 .invoke(engine, "Camera disconnected")
             instrumentation.waitForIdleSync()
@@ -76,10 +100,31 @@ class SleepSessionTest {
             }
             assertEquals(authorization, field(service, "captureAuthorization"))
             assertSame(sender, field(service, "networkSender"))
+            val settings = CameraSettings(context)
+            val appliedControls = mapOf("zoom" to 2.25, "exposureCompensation" to -1.0)
+            val recoveryGeneration = service.cameraStatus.generation
+            val lockedEngine = field(service, "engine")!!
+            shell("input keyevent 223")
+            await("Second screen-off transition was not observed") { field(service, "cameraInterruptedByLock") == true }
+            instrumentation.runOnMainSync {
+                setField(service, "cameraStatus", service.cameraStatus.copy(applied = appliedControls))
+                CameraEngine::class.java.getDeclaredMethod("fatal", String::class.java).apply { isAccessible = true }
+                    .invoke(lockedEngine, "Camera disconnected")
+            }
+            await("Camera did not suspend before explicit stop") {
+                field(service, "engine") == null && service.cameraStatus.generation > recoveryGeneration
+            }
+            await("Suspended camera retained keep-screen-on") { activeActivity.window.attributes.flags and keepScreenOn == 0 }
+            val cameraId = service.cameraStatus.camera
+            val mode = service.cameraStatus.mode
+            assertEquals(appliedControls, settings.values(cameraId, mode))
             instrumentation.runOnMainSync {
                 context.startService(Intent(context, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
             }
             await("Explicit stop did not release capture") { service.stats().state == "Stopped" }
+            await("Stop did not clear keep-screen-on") { activeActivity.window.attributes.flags and keepScreenOn == 0 }
+            assertEquals("Stop during locked suspension must preserve applied camera settings", appliedControls,
+                settings.values(cameraId, mode))
             assertEquals("", field(service, "captureAuthorization"))
             assertNull(field(service, "engine"))
             assertNull(field(service, "encoder"))
@@ -90,18 +135,31 @@ class SleepSessionTest {
             shell("wm dismiss-keyguard")
             context.startService(Intent(context, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
             context.unbindService(connection)
-            instrumentation.runOnMainSync { activity.finish() }
+            resumedMainActivity(instrumentation)?.let { current -> instrumentation.runOnMainSync { current.finish() } }
             identity.revoke(peer.id)
         }
     }
 
     private fun shell(command: String) {
+        shellOutput(command)
+    }
+    private fun shellOutput(command: String): String {
         InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command).use {
-            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+            return android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes().toString(Charsets.UTF_8)
         }
     }
     private fun field(owner: Any, name: String): Any? = owner.javaClass.getDeclaredField(name)
         .apply { isAccessible = true }.get(owner)
+    private fun setField(owner: Any, name: String, value: Any?) = owner.javaClass.getDeclaredField(name)
+        .apply { isAccessible = true }.set(owner, value)
+    private fun resumedMainActivity(instrumentation: android.app.Instrumentation): MainActivity? {
+        val active = AtomicReference<MainActivity?>()
+        instrumentation.runOnMainSync {
+            active.set(ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .filterIsInstance<MainActivity>().firstOrNull())
+        }
+        return active.get()
+    }
     private fun await(message: String, condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 15_000
         while (!condition() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50)

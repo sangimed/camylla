@@ -39,6 +39,7 @@ class CaptureService : LifecycleService() {
     private var thermalManager: PowerManager? = null
     private var captureWakeLock: PowerManager.WakeLock? = null
     private var cameraSuspended = false
+    private var cameraInterruptedByLock = false
     private val resumeCamera = Runnable {
         if (cameraSuspended && sessionStartMs != 0L && !phoneLocked()) {
             cameraSuspended = false
@@ -47,6 +48,10 @@ class CaptureService : LifecycleService() {
     }
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF && sessionStartMs != 0L) {
+                cameraInterruptedByLock = true
+                return
+            }
             // SCREEN_ON can precede keyguard dismissal; USER_PRESENT retries after it.
             main.removeCallbacks(resumeCamera)
             main.post(resumeCamera)
@@ -56,6 +61,7 @@ class CaptureService : LifecycleService() {
     @Volatile private var snapshot = StatsSnapshot()
     @Volatile internal var cameraStatus = CameraStatus()
         private set
+    internal fun shouldKeepScreenOn(): Boolean = sessionStartMs != 0L && captureAuthorization.isNotEmpty() && !cameraSuspended
     private var lastStatusSent = 0L
     private var lastQualitySent = 0L
     private var advertisedSession: String? = null
@@ -74,7 +80,9 @@ class CaptureService : LifecycleService() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "Camera capture", NotificationManager.IMPORTANCE_LOW))
         thermalManager = getSystemService(PowerManager::class.java)
         ContextCompat.registerReceiver(this, screenReceiver,
-            IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_USER_PRESENT) },
+            IntentFilter(Intent.ACTION_SCREEN_OFF).apply {
+                addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT)
+            },
             ContextCompat.RECEIVER_NOT_EXPORTED)
         thermalListener = PowerManager.OnThermalStatusChangedListener { snapshot = snapshot.copy(thermalStatus = it) }.also { thermalManager?.addThermalStatusListener(it) }
     }
@@ -193,10 +201,14 @@ class CaptureService : LifecycleService() {
                 } } },
                 { error -> main.post { if (token == generation) {
                     done(null, error)
-                    if (sessionStartMs != 0L && phoneLocked()) suspendCamera(error)
+                    if (sessionStartMs != 0L && (phoneLocked() || cameraInterruptedByLock)) {
+                        suspendCamera(error)
+                        if (!phoneLocked()) main.post(resumeCamera)
+                    }
                     else { endSession(); fail(error) }
                 } } },
                 { main.post { if (token == generation && sessionStartMs != 0L) {
+                    cameraInterruptedByLock = false
                     snapshot = snapshot.copy(state = "Capturing", resolution = "${mode.size.width}x${mode.size.height}", codec = activeEncoder.codecName, bitrate = activeEncoder.configuredBitrate, selectedBitrate = activeEncoder.selectedBitrate, outputFile = file.absolutePath)
                     settings.preferredCamera = current.id; settings.preferredMode = mode.name
                     done(cameras().indexOfFirst { it.id == current.id }.toDouble(), null); publishNetwork(true)
@@ -273,7 +285,7 @@ class CaptureService : LifecycleService() {
         saveSettings(); generation++; cameraSuspended = true
         engine?.close(); engine = null; encoder?.close(); encoder = null
         networkSender?.reconfigure(mode.label, facing(), generation)
-        cameraStatus = CameraStatus(camera = entry!!.id, mode = mode.name, generation = generation,
+        cameraStatus = cameraStatus.copy(generation = generation, pending = emptySet(),
             message = "Camera paused while phone locked; unlock to resume")
         snapshot = snapshot.copy(state = "Binding", error = reason)
     }
@@ -284,7 +296,7 @@ class CaptureService : LifecycleService() {
             .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel), "Stop", stop).build()).build()
     }
     private fun endSession() {
-        cameraSuspended = false; main.removeCallbacks(resumeCamera)
+        cameraSuspended = false; cameraInterruptedByLock = false; main.removeCallbacks(resumeCamera)
         generation++; saveSettings(); sessionStartMs = 0
         captureAuthorization = ""; capturePeer = ""
         engine?.close(); engine = null; encoder?.close(); encoder = null; networkSender?.close(); networkSender = null
