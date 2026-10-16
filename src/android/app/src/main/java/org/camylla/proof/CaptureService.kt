@@ -2,7 +2,10 @@ package org.camylla.proof
 
 import android.Manifest
 import android.app.*
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
@@ -12,6 +15,7 @@ import android.os.*
 import android.util.Size
 import android.view.Surface
 import androidx.camera.core.CameraSelector
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import org.json.JSONObject
 import java.io.File
@@ -33,6 +37,21 @@ class CaptureService : LifecycleService() {
     private var previewHeight = 1
     private var displayDegrees = 0
     private var thermalManager: PowerManager? = null
+    private var captureWakeLock: PowerManager.WakeLock? = null
+    private var cameraSuspended = false
+    private val resumeCamera = Runnable {
+        if (cameraSuspended && sessionStartMs != 0L && !phoneLocked()) {
+            cameraSuspended = false
+            bindCamera(settings.values(entry!!.id, mode.name))
+        }
+    }
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            // SCREEN_ON can precede keyguard dismissal; USER_PRESENT retries after it.
+            main.removeCallbacks(resumeCamera)
+            main.post(resumeCamera)
+        }
+    }
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
     @Volatile private var snapshot = StatsSnapshot()
     @Volatile internal var cameraStatus = CameraStatus()
@@ -54,6 +73,9 @@ class CaptureService : LifecycleService() {
         super.onCreate()
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "Camera capture", NotificationManager.IMPORTANCE_LOW))
         thermalManager = getSystemService(PowerManager::class.java)
+        ContextCompat.registerReceiver(this, screenReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_USER_PRESENT) },
+            ContextCompat.RECEIVER_NOT_EXPORTED)
         thermalListener = PowerManager.OnThermalStatusChangedListener { snapshot = snapshot.copy(thermalStatus = it) }.also { thermalManager?.addThermalStatusListener(it) }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -75,6 +97,11 @@ class CaptureService : LifecycleService() {
                     mode = Mode.fromName(intent.getStringExtra(EXTRA_MODE) ?: settings.preferredMode)
                     require(mode in entry!!.modes) { "Selected mode unavailable on this lens" }
                     startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+                    // A foreground service does not keep custom encoder/network threads
+                    // runnable after screen-off. The explicit session owns this CPU lease.
+                    @Suppress("WakelockTimeout")
+                    captureWakeLock = thermalManager!!.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,
+                        "Camylla:camera-session").apply { setReferenceCounted(false); acquire() }
                     sessionStartMs = SystemClock.elapsedRealtime()
                     captureAuthorization = java.util.UUID.randomUUID().toString(); capturePeer = peer.id
                     snapshot = StatsSnapshot(state = "Starting", requestedMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
@@ -164,7 +191,11 @@ class CaptureService : LifecycleService() {
                 { state -> main.post { if (token == generation && sessionStartMs != 0L) {
                     cameraStatus = state; snapshot = snapshot.copy(autofocus = state.focus, zoomRatio = (state.applied["zoom"] ?: 1.0).toFloat(), rotationDegrees = state.previewRotation); publishNetwork()
                 } } },
-                { error -> main.post { if (token == generation) { done(null, error); endSession(); fail(error) } } },
+                { error -> main.post { if (token == generation) {
+                    done(null, error)
+                    if (sessionStartMs != 0L && phoneLocked()) suspendCamera(error)
+                    else { endSession(); fail(error) }
+                } } },
                 { main.post { if (token == generation && sessionStartMs != 0L) {
                     snapshot = snapshot.copy(state = "Capturing", resolution = "${mode.size.width}x${mode.size.height}", codec = activeEncoder.codecName, bitrate = activeEncoder.configuredBitrate, selectedBitrate = activeEncoder.selectedBitrate, outputFile = file.absolutePath)
                     settings.preferredCamera = current.id; settings.preferredMode = mode.name
@@ -234,6 +265,18 @@ class CaptureService : LifecycleService() {
         } } ?: respond(null, "Capture stopped")
     }
     private fun fail(message: String) { android.util.Log.e("Camylla", message); snapshot = snapshot.copy(state = "Error", error = message) }
+    private fun phoneLocked() = thermalManager?.isInteractive != true ||
+        getSystemService(KeyguardManager::class.java).isKeyguardLocked
+    private fun suspendCamera(reason: String) {
+        // Camera eviction is not an explicit Stop: keep trust, authorization and the
+        // one network worker. Invalidate callbacks before releasing camera resources.
+        saveSettings(); generation++; cameraSuspended = true
+        engine?.close(); engine = null; encoder?.close(); encoder = null
+        networkSender?.reconfigure(mode.label, facing(), generation)
+        cameraStatus = CameraStatus(camera = entry!!.id, mode = mode.name, generation = generation,
+            message = "Camera paused while phone locked; unlock to resume")
+        snapshot = snapshot.copy(state = "Binding", error = reason)
+    }
     private fun notification(): Notification {
         val stop = PendingIntent.getService(this, 1, Intent(this, CaptureService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val open = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -241,13 +284,15 @@ class CaptureService : LifecycleService() {
             .setContentIntent(open).setOngoing(true).addAction(Notification.Action.Builder(Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel), "Stop", stop).build()).build()
     }
     private fun endSession() {
+        cameraSuspended = false; main.removeCallbacks(resumeCamera)
         generation++; saveSettings(); sessionStartMs = 0
         captureAuthorization = ""; capturePeer = ""
         engine?.close(); engine = null; encoder?.close(); encoder = null; networkSender?.close(); networkSender = null
+        captureWakeLock?.let { if (it.isHeld) it.release() }; captureWakeLock = null
         cameraStatus = CameraStatus(message = "Capture stopped; light released")
         stopForeground(Service.STOP_FOREGROUND_REMOVE); snapshot = snapshot.copy(state = "Stopped")
     }
-    override fun onDestroy() { endSession(); thermalListener?.let { thermalManager?.removeThermalStatusListener(it) }; super.onDestroy() }
+    override fun onDestroy() { endSession(); unregisterReceiver(screenReceiver); thermalListener?.let { thermalManager?.removeThermalStatusListener(it) }; super.onDestroy() }
     enum class Mode(val label: String, val size: Size) {
         HD("1280x720@30", Size(1280,720)), FHD("1920x1080@30", Size(1920,1080));
         companion object { fun fromName(name: String?): Mode = entries.find { it.name == name } ?: HD }
