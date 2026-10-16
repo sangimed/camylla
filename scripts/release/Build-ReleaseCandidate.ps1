@@ -67,7 +67,8 @@ foreach ($file in $nativeFiles) {
     Copy-Item -LiteralPath $file.Source -Destination (Join-Path $desktop $file.Destination)
 }
 
-Invoke-Checked (Join-Path $PSScriptRoot 'Test-ReleaseCandidate.ps1') @('-DesktopDirectory', $desktop) $repo
+& (Join-Path $PSScriptRoot 'Test-ReleaseCandidate.ps1') -DesktopDirectory $desktop
+if ($LASTEXITCODE -ne 0) { throw 'Release desktop layout validation failed.' }
 
 @"
 # Camylla portable build
