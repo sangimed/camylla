@@ -59,10 +59,12 @@ class SleepSessionTest {
                 activity.window.attributes.flags and keepScreenOn != 0
             }
             instrumentation.runOnMainSync { activity.recreate() }
+            val recreatedActivity = AtomicReference<MainActivity?>()
             await("Recreated activity did not restore keep-screen-on for the active session") {
-                resumedMainActivity(instrumentation)?.window?.attributes?.flags?.and(keepScreenOn) != 0
+                resumedMainActivity(instrumentation).also { recreatedActivity.set(it) }
+                    ?.let { it.window.attributes.flags and keepScreenOn != 0 } == true
             }
-            val activeActivity = resumedMainActivity(instrumentation)!!
+            val activeActivity = recreatedActivity.get() ?: error("Recreated activity was not resumed")
             val originalTimeout = shellOutput("settings get system screen_off_timeout").trim()
             assertTrue("Could not read emulator screen timeout", originalTimeout.toLongOrNull() != null)
             shell("settings put system screen_off_timeout 3000")
@@ -84,6 +86,11 @@ class SleepSessionTest {
             await("Screen-off transition was not observed") { field(service, "cameraInterruptedByLock") == true }
             shell("input keyevent 224")
             shell("wm dismiss-keyguard")
+            await("Device did not unlock before delayed camera error") {
+                context.getSystemService(PowerManager::class.java).isInteractive &&
+                    !context.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked
+            }
+            instrumentation.waitForIdleSync()
             // Deliver the Camera2 error after unlock to cover callbacks delayed by the
             // camera service while the device was locked.
             CameraEngine::class.java.getDeclaredMethod("fatal", String::class.java).apply { isAccessible = true }
