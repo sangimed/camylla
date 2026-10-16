@@ -38,6 +38,7 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.lifecycle:lifecycle-service:2.9.4")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:5.14.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

@@ -78,6 +78,9 @@ internal class CameraRenderer(private val width: Int, private val height: Int, e
         }
     }
     fun attach(surface: Surface?, width: Int, height: Int) {
+        // The previous window may already be invalidated by SurfaceView destruction.
+        // Switch away from the old window before releasing or replacing it.
+        makeCurrent(output)
         preview?.let { EGL14.eglDestroySurface(display, it) }; preview = null
         if (surface != null && surface.isValid) {
             val window = EGL14.eglCreateWindowSurface(display, config, surface, intArrayOf(EGL14.EGL_NONE), 0)
@@ -98,8 +101,14 @@ internal class CameraRenderer(private val width: Int, private val height: Int, e
             EGLExt.eglPresentationTimeANDROID(display, output, inputTexture.timestamp)
             check(EGL14.eglSwapBuffers(display, output))
             preview?.let {
-                draw(it, previewWidth, previewHeight, previewRotation, values["previewMirror"] == 1.0, true)
-                if (!EGL14.eglSwapBuffers(display, it)) { EGL14.eglDestroySurface(display, it); preview = null }
+                try {
+                    draw(it, previewWidth, previewHeight, previewRotation, values["previewMirror"] == 1.0, true)
+                    check(EGL14.eglSwapBuffers(display, it))
+                } catch (_: Exception) {
+                    // Rotation/backgrounding can destroy the phone window before the queued
+                    // detach runs. Monitoring is optional: retain camera/encoder/transport.
+                    attach(null, 1, 1)
+                }
             }
             if (values["histogram"] == 1.0 && android.os.SystemClock.elapsedRealtime() - lastHistogram >= 500) {
                 lastHistogram = android.os.SystemClock.elapsedRealtime()
