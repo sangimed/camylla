@@ -50,6 +50,13 @@ Invoke-Checked (Join-Path $repo 'src\android\gradlew.bat') @(':app:testDebugUnit
 $desktop = Join-Path $stage 'windows-x64-portable'
 Invoke-Checked 'dotnet' @('publish', 'src/windows/desktop/Camylla.Desktop.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', "-p:CamyllaVersion=$Version", '-o', $desktop) $repo
 
+# WinUI generates the application's XAML resource index beside the build output,
+# but dotnet publish does not copy it for an unpackaged application. Without it,
+# the desktop executable exits while loading MainWindow.xaml.
+$desktopPri = Join-Path $repo 'src\windows\desktop\bin\Release\net10.0-windows10.0.19041.0\win-x64\Camylla.Desktop.pri'
+if (-not (Test-Path -LiteralPath $desktopPri -PathType Leaf)) { throw "Required WinUI resource index is missing: $desktopPri" }
+Copy-Item -LiteralPath $desktopPri -Destination (Join-Path $desktop 'Camylla.Desktop.pri')
+
 $nativeFiles = @(
     @{ Source = Join-Path $cmakeBuild 'src\windows\receiver\native\Release\camylla_mf_decoder.dll'; Destination = 'camylla_mf_decoder.dll' },
     @{ Source = Join-Path $cmakeBuild 'src\windows\virtual-camera\Release\camylla_virtual_camera_source.dll'; Destination = 'camylla_virtual_camera_source.dll' },
@@ -59,6 +66,8 @@ foreach ($file in $nativeFiles) {
     if (-not (Test-Path -LiteralPath $file.Source -PathType Leaf)) { throw "Required release file is missing: $($file.Source)" }
     Copy-Item -LiteralPath $file.Source -Destination (Join-Path $desktop $file.Destination)
 }
+
+Invoke-Checked (Join-Path $PSScriptRoot 'Test-ReleaseCandidate.ps1') @('-DesktopDirectory', $desktop) $repo
 
 @"
 # Camylla portable build
