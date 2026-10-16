@@ -87,6 +87,7 @@ class MainActivity : Activity() {
                 }
             }
             attachPreview()
+            updateKeepScreenOn()
             showStats()
         }
         override fun onServiceDisconnected(name: ComponentName) { service = null; focusTargetView.update(null) }
@@ -437,6 +438,7 @@ class MainActivity : Activity() {
     override fun onStop() {
         handler.removeCallbacks(refresh)
         handler.removeCallbacks(refreshFocus)
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         focusTargetView.update(null)
         service?.attachPreview(null, 1, 1)
         if (bound) unbindService(connection)
@@ -473,6 +475,7 @@ class MainActivity : Activity() {
         }.onFailure { trustError = "Protected trust unavailable. Re-pair or restore this app's keys." }
     }
     private fun showStats() {
+        updateKeepScreenOn()
         val value = service?.stats() ?: StatsSnapshot()
         if (::cameraPanel.isInitialized) cameraPanel.update(service?.cameraStatus ?: CameraStatus())
         if (::histogramView.isInitialized) histogramView.invalidate()
@@ -537,6 +540,11 @@ class MainActivity : Activity() {
             Connection attempts: ${value.network.connectionAttempts}  Consecutive failures: ${value.network.consecutiveFailures}
             Successful recoveries: ${value.network.successfulRecoveries}  Last sequence: ${value.network.lastSequence}
         """.trimIndent()
+    }
+
+    private fun updateKeepScreenOn() {
+        val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        if (service?.shouldKeepScreenOn() == true) window.addFlags(flag) else window.clearFlags(flag)
     }
 
     companion object {
