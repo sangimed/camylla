@@ -55,6 +55,9 @@
                 <Setter Property="Foreground" Value="{StaticResource CamyllaDangerBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource CamyllaDangerBrush}" />
             </Style>
+
+            <!-- Code-created camera-control buttons automatically use the same compact treatment. -->
+            <Style TargetType="Button" BasedOn="{StaticResource CamyllaButtonStyle}" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
