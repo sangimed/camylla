@@ -1,8 +1,8 @@
 # Android rotation preserves the camera session — #70
 
-Tracking: [#70](https://github.com/sangimed/camylla/issues/70).
-Unmerged engineering checkpoint; physical paired-stream and OBS acceptance remain
-unverified. No roadmap milestone is marked complete.
+Tracking: [#70](https://github.com/sangimed/camylla/issues/70), merged in
+[PR #72](https://github.com/sangimed/camylla/pull/72). Physical paired-stream
+and OBS acceptance remain unverified.
 
 ## Ownership investigation
 
