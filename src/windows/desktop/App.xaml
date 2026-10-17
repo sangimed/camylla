@@ -1,12 +1,60 @@
 <Application
     x:Class="Camylla.Desktop.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Camylla dark workspace tokens. Keep these aligned with DESIGN.md and MobileUi.kt. -->
+            <SolidColorBrush x:Key="CamyllaBackgroundBrush" Color="#FF18181B" />
+            <SolidColorBrush x:Key="CamyllaSurfaceBrush" Color="#FF222225" />
+            <SolidColorBrush x:Key="CamyllaRaisedBrush" Color="#FF2B2B2F" />
+            <SolidColorBrush x:Key="CamyllaBorderBrush" Color="#FF3A3A3F" />
+            <SolidColorBrush x:Key="CamyllaTextBrush" Color="#FFF2F2F3" />
+            <SolidColorBrush x:Key="CamyllaMutedBrush" Color="#FFA1A1AA" />
+            <SolidColorBrush x:Key="CamyllaAccentBrush" Color="#FF59A6FF" />
+            <SolidColorBrush x:Key="CamyllaConnectedBrush" Color="#FF4DD49B" />
+            <SolidColorBrush x:Key="CamyllaWarningBrush" Color="#FFF3A94B" />
+            <SolidColorBrush x:Key="CamyllaDangerBrush" Color="#FFFF6B75" />
+
+            <Style x:Key="CamyllaSectionLabelStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="CharacterSpacing" Value="100" />
+                <Setter Property="Foreground" Value="{StaticResource CamyllaMutedBrush}" />
+            </Style>
+
+            <Style x:Key="CamyllaSecondaryTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Foreground" Value="{StaticResource CamyllaMutedBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+
+            <Style x:Key="CamyllaButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="MinHeight" Value="36" />
+                <Setter Property="Padding" Value="12,6" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="Background" Value="{StaticResource CamyllaRaisedBrush}" />
+                <Setter Property="Foreground" Value="{StaticResource CamyllaTextBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CamyllaBorderBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+
+            <Style x:Key="CamyllaPrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource CamyllaButtonStyle}">
+                <Setter Property="Background" Value="{StaticResource CamyllaAccentBrush}" />
+                <Setter Property="Foreground" Value="{StaticResource CamyllaBackgroundBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CamyllaAccentBrush}" />
+            </Style>
+
+            <Style x:Key="CamyllaDangerButtonStyle" TargetType="Button" BasedOn="{StaticResource CamyllaButtonStyle}">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{StaticResource CamyllaDangerBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource CamyllaDangerBrush}" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>
