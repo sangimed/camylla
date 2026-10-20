@@ -21,13 +21,15 @@ void Check(bool condition, std::string_view message) {
 
 void ChecksModeAndLayout() {
     using namespace camylla::virtual_camera;
-    Check(SupportedModes().size() == 2, "exactly the two intended modes are exposed");
+    Check(SupportedModes().size() == 3, "baseline modes and 1080p60 are exposed");
     Check(IsSupportedMode({1280, 720, 30}), "720p30 must be supported");
     Check(IsSupportedMode({1920, 1080, 30}), "1080p30 must be supported");
-    Check(!IsSupportedMode({1280, 720, 60}), "60 FPS must not be supported");
+    Check(IsSupportedMode({1920, 1080, 60}), "1080p60 must be supported");
+    Check(!IsSupportedMode({1280, 720, 60}), "unsupported 720p60 must not be exposed");
     Check(Nv12Stride({1280, 720, 30}) == 1280, "NV12 stride equals width for generated frames");
     Check(Nv12FrameSize({1280, 720, 30}) == 1'382'400, "720p NV12 frame size is correct");
     Check(Nv12FrameSize({1920, 1080, 30}) == 3'110'400, "1080p NV12 frame size is correct");
+    Check(Nv12FrameSize({1920, 1080, 60}) == 3'110'400, "1080p60 NV12 frame size is correct");
 }
 
 void ChecksCadenceWithoutLongTermDrift() {
@@ -40,6 +42,11 @@ void ChecksCadenceWithoutLongTermDrift() {
           "cadence has no accumulated 30 FPS rounding drift");
     Check(cadence.DurationFor(0) + cadence.DurationFor(1) + cadence.DurationFor(2) > 0,
           "individual frame durations are positive");
+    FrameCadence sixty(60);
+    Check(sixty.TimestampFor(60) == kHundredNanosecondsPerSecond,
+          "sixty frames equal exactly one second");
+    Check(sixty.DurationFor(0) == 166666 && sixty.DurationFor(1) == 166667,
+          "60 FPS duration distributes fractional 100ns ticks without drift");
 }
 
 void ChecksSyntheticFramesAreDeterministicAndComplete() {

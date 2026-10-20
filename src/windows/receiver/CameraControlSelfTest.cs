@@ -90,9 +90,9 @@ internal static partial class ProductionSelfTest
             Check(host.CameraControls().Applied.Count == 0 && host.CameraControls().Capabilities.Count == 0 &&
                 host.Quality().SessionId.Length == 0 && host.Snapshot().State == "Recovering", "camera change immediately clears stale controls, quality and publication state");
             await Wire.WriteControlAsync(control,new { type = "camera_reconfigure",version = 3,session_id = id,
-                request_nonce = ProductionTrust.RandomHex(16),mode = "1920x1080@30",lens = "front",generation = 3 },lifetime.Token);
+                request_nonce = ProductionTrust.RandomHex(16),mode = "1920x1080@60",lens = "front",generation = 3 },lifetime.Token);
             using var renewed = await Wire.ReadControlAsync(control,lifetime.Token);
-            Check(Wire.RequiredString(renewed.RootElement,"type") == "video_ticket" && host.Snapshot().Mode == "1920x1080@30" &&
+            Check(Wire.RequiredString(renewed.RootElement,"type") == "video_ticket" && host.Snapshot().Mode == "1920x1080@60" &&
                 host.Snapshot().FrameEpoch > oldEpoch && host.Frames.PendingDepth == 0, "reconfiguration clears publication before issuing new bind ticket");
             using var video = await Connect(videoPort,trust.DesktopId,phone,lifetime.Token);
             await Wire.WriteControlAsync(video,new { type = "bind",version = 3,session_id = id,phone_id = ProductionTrust.PeerId(phone),

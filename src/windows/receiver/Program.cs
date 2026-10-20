@@ -62,9 +62,12 @@ if (args.Length == 1 && args[0] == "--camera-controls-self-test") { await Produc
 if (args.Length == 1 && args[0] == "--ipc-host-smoke") { await SelfTest.IpcHostSmokeAsync(); return; }
 if (args.Length == 1 && args[0] == "--frame-memory-smoke") { SelfTest.FrameMemorySmoke(); return; }
 if (args.Length == 1 && args[0] == "--decoder-smoke") {
-    using var decoder = new MfDecoder("1280x720@30");
-    decoder.Reset();
-    Console.WriteLine("Media Foundation decoder create/reset passed");
+    foreach (var mode in VideoMode.Supported)
+    {
+        using var decoder = new MfDecoder(mode);
+        decoder.Reset();
+        Console.WriteLine($"Media Foundation decoder create/reset passed for {mode}");
+    }
     return;
 }
 if (args.Length == 2 && args[0] == "--decoder-file") { SelfTest.DecodeAnnexBFile(args[1]); return; }

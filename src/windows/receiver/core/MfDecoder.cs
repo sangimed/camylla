@@ -21,11 +21,15 @@ public sealed class MfDecoder : IDisposable
     public MfDecoder(string mode, Action<OwnedNv12Frame>? frameSink = null)
     {
         this.frameSink = frameSink;
-        var dimensions = mode.Split('@')[0].Split('x');
+        var parts = mode.Split('@');
+        if (parts.Length != 2) throw new ArgumentException("Video mode must include resolution and frame rate", nameof(mode));
+        var dimensions = parts[0].Split('x');
+        if (dimensions.Length != 2) throw new ArgumentException("Video mode resolution is invalid", nameof(mode));
         var width = uint.Parse(dimensions[0]);
         var height = uint.Parse(dimensions[1]);
+        var framesPerSecond = uint.Parse(parts[1]);
         frameCallback = OnFrame;
-        Marshal.ThrowExceptionForHR(NativeCreate(width, height, frameCallback, IntPtr.Zero, out handle));
+        Marshal.ThrowExceptionForHR(NativeCreate(width, height, framesPerSecond, frameCallback, IntPtr.Zero, out handle));
     }
 
     private void OnFrame(IntPtr data, uint length, uint width, uint height, uint stride,
@@ -74,7 +78,7 @@ public sealed class MfDecoder : IDisposable
     }
 
     [DllImport("camylla_mf_decoder", EntryPoint = "CamyllaDecoderCreate", CallingConvention = CallingConvention.Cdecl)]
-    private static extern int NativeCreate(uint width, uint height, FrameCallback callback, IntPtr context, out IntPtr handle);
+    private static extern int NativeCreate(uint width, uint height, uint framesPerSecond, FrameCallback callback, IntPtr context, out IntPtr handle);
     [DllImport("camylla_mf_decoder", EntryPoint = "CamyllaDecoderPush", CallingConvention = CallingConvention.Cdecl)]
     private static extern int NativePush(IntPtr handle, byte[] data, uint length, ulong ptsUs, out uint count);
     [DllImport("camylla_mf_decoder", EntryPoint = "CamyllaDecoderReset", CallingConvention = CallingConvention.Cdecl)]

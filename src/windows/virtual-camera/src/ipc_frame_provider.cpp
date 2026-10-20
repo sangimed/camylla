@@ -115,6 +115,7 @@ void IpcFrameProvider::Neutralize(Nv12Frame& frame) const {
 }
 
 Nv12Frame IpcFrameProvider::NextFrame(std::uint64_t frame_index) {
+    std::lock_guard request_lock(request_mutex_);
     Nv12Frame frame{.mode = mode_, .timestamp_100ns = FrameCadence(mode_.frames_per_second).TimestampFor(frame_index),
                     .bytes = std::vector<std::uint8_t>(Nv12FrameSize(mode_))};
     Neutralize(frame);
@@ -135,12 +136,36 @@ Nv12Frame IpcFrameProvider::NextFrame(std::uint64_t frame_index) {
     if (!Transfer(false, input_.data(), header.length)) {
         Disconnect(); return frame;
     }
-    if (GetTickCount64() > header.captured_ms + kMaxFrameAgeMs) return frame;
-    if (header.generation == generation_ && header.sequence < last_sequence_) return frame;
+    if (GetTickCount64() > header.captured_ms + kMaxFrameAgeMs) {
+        ++stale_frames_;
+        return frame;
+    }
+    const bool same_generation = header.generation == generation_;
+    if (same_generation && header.sequence < last_sequence_) {
+        ++stale_frames_;
+        return frame;
+    }
+    const bool repeated = same_generation && header.sequence == last_sequence_;
     generation_ = header.generation;
     last_sequence_ = header.sequence;
-    ResizeNv12(std::span<const std::uint8_t>(input_.data(), header.length),
-               {header.width, header.height, 30}, header.stride, frame.bytes, mode_);
+    // The resize helper validates VideoMode, but uses only source dimensions.
+    // Keep source cadence out of the consumer's negotiated output cadence.
+    if (ResizeNv12(std::span<const std::uint8_t>(input_.data(), header.length),
+                   {header.width, header.height, 30}, header.stride, frame.bytes, mode_)) {
+        if (repeated) ++repeated_requests_;
+        else ++unique_frames_;
+    } else {
+        ++stale_frames_;
+    }
+    if (frame_index % 600 == 599) {
+        const auto message = std::wstring(L"Camylla virtual camera requests=") +
+            std::to_wstring(frame_index + 1) + L" uniqueIPCFrames=" + std::to_wstring(unique_frames_) +
+            L" repeatedIPCRequests=" + std::to_wstring(repeated_requests_) +
+            L" staleIPCFrames=" + std::to_wstring(stale_frames_) + L" target=" +
+            std::to_wstring(mode_.width) + L"x" + std::to_wstring(mode_.height) + L"@" +
+            std::to_wstring(mode_.frames_per_second) + L"\n";
+        OutputDebugStringW(message.c_str());
+    }
     return frame;
 }
 

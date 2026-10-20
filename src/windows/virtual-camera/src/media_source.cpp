@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -454,13 +455,14 @@ HRESULT CamyllaMediaSource::Initialize(IMFAttributes* activation_attributes) {
     if (FAILED(hr = MFCreateAttributes(&attributes_, 8))) return hr;
     if (activation_attributes != nullptr &&
         FAILED(hr = activation_attributes->CopyAllItems(attributes_.Get()))) return hr;
-    ComPtr<IMFMediaType> media_types[2];
+    std::array<ComPtr<IMFMediaType>, std::size(kModes)> media_types;
+    std::array<IMFMediaType*, std::size(kModes)> types{};
     for (std::size_t i = 0; i < SupportedModes().size(); ++i) {
         if (FAILED(hr = CreateMediaType(SupportedModes()[i], &media_types[i]))) return hr;
+        types[i] = media_types[i].Get();
     }
     ComPtr<IMFStreamDescriptor> stream_descriptor;
-    IMFMediaType* types[] = {media_types[0].Get(), media_types[1].Get()};
-    if (FAILED(hr = MFCreateStreamDescriptor(0, 2, types, &stream_descriptor))) return hr;
+    if (FAILED(hr = MFCreateStreamDescriptor(0, static_cast<DWORD>(types.size()), types.data(), &stream_descriptor))) return hr;
     ComPtr<IMFMediaTypeHandler> handler;
     if (FAILED(hr = stream_descriptor->GetMediaTypeHandler(&handler)) ||
         FAILED(hr = handler->SetCurrentMediaType(media_types[0].Get())) ||

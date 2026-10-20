@@ -6,6 +6,8 @@
 #include <Windows.h>
 
 #include <array>
+#include <cstdint>
+#include <mutex>
 #include <vector>
 
 namespace camylla::virtual_camera {
@@ -30,6 +32,10 @@ private:
     std::array<std::uint8_t, 16> generation_{};
     std::uint64_t last_sequence_{};
     std::uint64_t deadline_ms_{};
+    std::uint64_t unique_frames_{};
+    std::uint64_t repeated_requests_{};
+    std::uint64_t stale_frames_{};
+    std::mutex request_mutex_;
 };
 
 }  // namespace camylla::virtual_camera

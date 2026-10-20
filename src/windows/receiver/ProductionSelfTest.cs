@@ -191,10 +191,12 @@ internal static partial class ProductionSelfTest
             {
                 var nonce = ProductionTrust.RandomHex(16);
                 await Wire.WriteControlAsync(control, new { type = "start", version = 3, phone_id = phoneId,
-                    client_nonce = nonce, codec = "h264", modes = new[] { "1280x720@30" }, mode = "1280x720@30", lens = "rear" }, lifetime.Token);
+                    client_nonce = nonce, codec = "h264", modes = new[] { "1920x1080@60" }, mode = "1920x1080@60", lens = "rear" }, lifetime.Token);
                 using var started = await Wire.ReadControlAsync(control, lifetime.Token);
                 Check(Wire.RequiredString(started.RootElement, "type") == "started", "trusted start accepted");
                 var value = started.RootElement;
+                Check(Wire.RequiredString(value, "mode") == "1920x1080@60" &&
+                    Wire.RequiredInt(value, "fps") == 60, "selected advertised 1080p60 is acknowledged at 60 FPS");
                 using (var busy = await Connect(controlPort, trust.DesktopId, phone, lifetime.Token))
                 {
                     await Wire.WriteControlAsync(busy, new { type = "start", version = 3, phone_id = phoneId,
