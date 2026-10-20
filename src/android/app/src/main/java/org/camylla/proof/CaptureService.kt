@@ -34,6 +34,7 @@ class CaptureService : LifecycleService() {
     private var fallbackPolicy = CaptureFallbackPolicy()
     private var fallbackReason = ""
     @Volatile private var generation = 0
+    @Volatile private var lastEncodedProgressMs = 0L
     private var sessionStartMs = 0L
     private var previewSurface: Surface? = null
     private var previewWidth = 1
@@ -178,6 +179,8 @@ class CaptureService : LifecycleService() {
         if (sessionStartMs == 0L) return
         val current = entry ?: return; val token = ++generation
         val bindStartedMs = SystemClock.elapsedRealtime()
+        lastEncodedProgressMs = 0L
+        if (mode == Mode.FHD60) monitorSixtyFps(token, current, bindStartedMs)
         networkSender?.reconfigure(mode.label, facing(), token, current.modes.map { it.label })
         engine?.close(); engine = null; encoder?.close(); encoder = null
         cameraStatus = CameraStatus(camera = current.id, mode = mode.name, generation = token, message = "Changing camera")
@@ -188,6 +191,7 @@ class CaptureService : LifecycleService() {
             file.parentFile?.listFiles { f -> f.extension == "h264" }?.sortedByDescending { it.lastModified() }?.drop(2)?.forEach { it.delete() }
             val activeEncoder = AvcEncoder(mode.size.width, mode.size.height, mode.fps, file,
                 onUpdate = { p -> if (token == generation) {
+                    lastEncodedProgressMs = SystemClock.elapsedRealtime()
                     val active = encoder
                     if (active != null) {
                         val underPressure = networkSender?.stats()?.state == "Recovering" ||
@@ -213,17 +217,13 @@ class CaptureService : LifecycleService() {
                     cameraStatus = state; snapshot = snapshot.copy(autofocus = state.focus, zoomRatio = (state.applied["zoom"] ?: 1.0).toFloat(), rotationDegrees = state.previewRotation); publishNetwork()
                 } } },
                 { error -> main.post { if (token == generation) {
-                    if ((error.contains("session rejected", true) || error.startsWith("Camera request setup", true)) &&
-                        mode == Mode.FHD60 && fallbackPolicy.claimFallback()) {
-                        fallbackTo30Claimed("1080p60 camera configuration was rejected; using 1080p30.", current, done)
-                        return@post
-                    }
-                    done(null, error)
                     if (sessionStartMs != 0L && (phoneLocked() || cameraInterruptedByLock)) {
+                        done(null, error)
                         suspendCamera(error)
                         if (!phoneLocked()) main.post(resumeCamera)
-                    }
-                    else { endSession(); fail(error) }
+                    } else if (mode == Mode.FHD60 && fallbackPolicy.claimFallback()) {
+                        fallbackTo30Claimed("1080p60 camera startup failed (${error}); using 1080p30.", current, done)
+                    } else { done(null, error); endSession(); fail(error) }
                 } } },
                 { main.post { if (token == generation && sessionStartMs != 0L) {
                     cameraInterruptedByLock = false
@@ -242,6 +242,23 @@ class CaptureService : LifecycleService() {
         if (mode != Mode.FHD60 || sessionStartMs == 0L) return
         fallbackReason = reason; mode = Mode.FHD
         bindCamera(settings.values(current.id, mode.name), done)
+    }
+    private fun monitorSixtyFps(token: Int, current: CameraEntry, bindStartedMs: Long) {
+        val watchdog = object : Runnable {
+            override fun run() {
+                if (token != generation || mode != Mode.FHD60 || sessionStartMs == 0L) return
+                val now = SystemClock.elapsedRealtime()
+                val lastProgress = lastEncodedProgressMs
+                val stalled = now - bindStartedMs >= 5_000 &&
+                    (lastProgress == 0L || now - lastProgress >= 5_000)
+                if (stalled && fallbackPolicy.claimFallback()) {
+                    fallbackTo30Claimed("1080p60 produced no unique encoded-frame progress for five seconds; using 1080p30.", current)
+                    return
+                }
+                main.postDelayed(this, 1_000)
+            }
+        }
+        main.postDelayed(watchdog, 1_000)
     }
     private fun publishNetwork(force: Boolean = false) {
         val sender = networkSender ?: return; val id = sender.currentSession() ?: return; val state = cameraStatus

@@ -14,8 +14,9 @@ class CaptureModeCapabilityTest {
     @Test fun underperformingSixtyModeFallsBackOnlyOnceAfterStabilityWindow() {
         val policy = CaptureFallbackPolicy()
         assertFalse(policy.shouldFallback(4_999, 20.0, 60))
-        assertFalse(policy.shouldFallback(5_000, 54.0, 60))
-        assertTrue(policy.shouldFallback(5_000, 49.0, 60))
+        assertFalse(policy.shouldFallback(5_000, 57.0, 60))
+        assertTrue(policy.shouldFallback(5_000, 56.9, 60))
+        assertTrue(CaptureFallbackPolicy().shouldFallback(5_000, 0.0, 60))
         assertFalse(policy.shouldFallback(10_000, 10.0, 60))
         assertFalse(CaptureFallbackPolicy().shouldFallback(5_000, 24.0, 30))
     }
