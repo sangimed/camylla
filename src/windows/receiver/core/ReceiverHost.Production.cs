@@ -151,7 +151,7 @@ public sealed partial class ReceiverHost
                 var clientNonce = V3Record.Hex(value, "client_nonce", 16);
                 var mode = Wire.RequiredString(value, "mode");
                 var lens = Wire.RequiredString(value, "lens");
-                if (Wire.RequiredString(value, "codec") != "h264" || mode is not ("1280x720@30" or "1920x1080@30") || lens is not ("rear" or "front"))
+                if (Wire.RequiredString(value, "codec") != "h264" || !VideoMode.TryParse(mode, out var selectedMode) || lens is not ("rear" or "front"))
                     throw new InvalidDataException("mode_unsupported");
                 var modes = value.GetProperty("modes");
                 if (modes.ValueKind != JsonValueKind.Array || modes.GetArrayLength() is < 1 or > 16 ||
@@ -173,7 +173,7 @@ public sealed partial class ReceiverHost
                 }
                 await session.SendAsync(new { type = "started", version = 3, session_id = session.Id,
                     client_nonce = clientNonce, server_nonce = security.ServerNonce, video_ticket = ticket,
-                    codec = "h264", mode, fps = 30 }, ct);
+                    codec = "h264", mode, fps = selectedMode.FramesPerSecond }, ct);
                 Report($"Authenticated v3 control phone={phoneId} mode={mode} TLS={tls.SslProtocol}");
                 using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(ct, session.Token);
                 while (!lifetime.IsCancellationRequested)
@@ -235,7 +235,7 @@ public sealed partial class ReceiverHost
                             {
                                 var nextMode = Wire.RequiredString(message.RootElement, "mode");
                                 var nextLens = Wire.RequiredString(message.RootElement, "lens");
-                                if (nextMode is not ("1280x720@30" or "1920x1080@30") || nextLens is not ("front" or "rear") ||
+                                if (!VideoMode.TryParse(nextMode, out _) || nextLens is not ("front" or "rear") ||
                                     Wire.RequiredInt(message.RootElement, "generation") <= security.LastCameraReconfiguration) throw new InvalidDataException("mode_unsupported");
                                 security.LastCameraReconfiguration = Wire.RequiredInt(message.RootElement, "generation");
                                 session.Mode = nextMode; session.Lens = nextLens;

@@ -19,6 +19,7 @@ public sealed partial class ReceiverHost : IDisposable
     private Session? active;
     private readonly object Gate = new();
     private long received, keyframes, decoded, decoderErrors, networkErrors, decoderResets, reconnects;
+    private long decodedPtsAdvances, decodedNonIncreasingPts;
     private long controlDisconnects;
     private ulong lastSequence, lastPts, lastAndroidSendUs;
     private long lastReceiveTicks, lastDecodeTicks;
@@ -144,7 +145,8 @@ public sealed partial class ReceiverHost : IDisposable
             lastReceiveTicks, lastDecodeTicks, Interlocked.Read(ref lastPushReceiveToDecodeTicks),
             lastDecodedWidth, lastDecodedHeight, lastDecodedStride,
             frames.PendingDepth, frames.HighWater, frames.Superseded, Interlocked.Read(ref frameEpoch), issue,
-            captureMayBeActive, Interlocked.Read(ref controlDisconnects));
+            captureMayBeActive, Interlocked.Read(ref controlDisconnects),
+            Interlocked.Read(ref decodedPtsAdvances), Interlocked.Read(ref decodedNonIncreasingPts));
     }
     private void SetConnectionIssue(string? issue)
     {
@@ -230,13 +232,13 @@ public sealed partial class ReceiverHost : IDisposable
                 if (Wire.RequiredInt(value, "version") != Wire.Version) throw new InvalidDataException("Unsupported protocol version");
                 if (Wire.RequiredString(value, "codec") != "h264") throw new InvalidDataException("Unsupported codec");
                 var mode = Wire.RequiredString(value, "mode");
-                if (mode is not ("1280x720@30" or "1920x1080@30")) throw new InvalidDataException("Invalid mode");
+                if (!VideoMode.TryParse(mode, out var selectedMode)) throw new InvalidDataException("Invalid mode");
                 var lens = Wire.RequiredString(value, "lens");
                 if (lens is not ("rear" or "front")) throw new InvalidDataException("Invalid lens");
                 if (!value.TryGetProperty("modes", out var modes) || modes.ValueKind != JsonValueKind.Array ||
-                    modes.GetArrayLength() is < 1 or > 2 ||
+                    modes.GetArrayLength() is < 1 or > 3 ||
                     modes.EnumerateArray().Any(m => m.ValueKind != JsonValueKind.String ||
-                        m.GetString() is not ("1280x720@30" or "1920x1080@30")) ||
+                        !VideoMode.TryParse(m.GetString(), out _)) ||
                     !modes.EnumerateArray().Any(m => m.GetString() == mode))
                     throw new InvalidDataException("Selected mode not advertised");
                 if (!Wire.FixedHexEquals(Wire.RequiredString(value, "secret"), token))
@@ -250,7 +252,7 @@ public sealed partial class ReceiverHost : IDisposable
                 }
                 Report($"Authenticated control peer={session.Peer} session={id} mode={mode} lens={lens}");
                 await session.SendAsync(new { type = "welcome", version = Wire.Version, session = id,
-                    codec = "h264", mode, fps = 30 }, ct);
+                    codec = "h264", mode, fps = selectedMode.FramesPerSecond }, ct);
                 while (!ct.IsCancellationRequested)
                 {
                     using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -348,7 +350,17 @@ public sealed partial class ReceiverHost : IDisposable
                     : new { type = "ready", version = 3, session_id = id }, ct);
                 Interlocked.Increment(ref reconnects);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, session.Token);
-                using var decoder = new MfDecoder(session.Mode, frame => PublishSessionFrame(session, frame));
+                long previousDecodedPts = -1;
+                using var decoder = new MfDecoder(session.Mode, frame =>
+                {
+                    if (frame.Pts100ns > previousDecodedPts)
+                    {
+                        previousDecodedPts = frame.Pts100ns;
+                        Interlocked.Increment(ref decodedPtsAdvances);
+                    }
+                    else Interlocked.Increment(ref decodedNonIncreasingPts);
+                    PublishSessionFrame(session, frame);
+                });
                 long rejectedFrames = 0;
                 byte[]? config = null;
                 uint generation = 0;
@@ -465,7 +477,8 @@ public sealed record ReceiverSnapshot(string State, string Peer, string SessionI
     ulong LastAndroidSendUs, long LastReceiveTicks, long LastDecodeTicks,
     long LastReceiveToDecodeTicks, uint Width, uint Height, uint Stride,
     int FrameQueueDepth, int FrameQueueHighWater, long SupersededPreviewFrames, long FrameEpoch = 0,
-    string? ConnectionIssue = null, bool CaptureMayBeActive = false, long ControlDisconnects = 0);
+    string? ConnectionIssue = null, bool CaptureMayBeActive = false, long ControlDisconnects = 0,
+    long DecodedPtsAdvances = 0, long DecodedNonIncreasingPts = 0);
 
 internal enum ReceiverState { Disconnected, Connecting, Authenticating, Negotiating, Streaming, Recovering, Stopping, Error }
 

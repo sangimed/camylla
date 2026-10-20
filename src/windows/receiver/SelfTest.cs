@@ -90,6 +90,7 @@ internal static class SelfTest
     private static readonly string TestPipeName = "CamyllaTest-" + Guid.NewGuid().ToString("N");
     public static async Task RunAsync()
     {
+        TestVideoModeContract();
         TestOwnedLatestFrames();
         TestNv12Conversion();
         await TestCameraPipeAsync();
@@ -132,6 +133,17 @@ internal static class SelfTest
         try { Wire.RequireBoundSession("AA", "BB"); throw new Exception("Self-test failed: mismatched session"); }
         catch (System.Security.Authentication.AuthenticationException) { }
         Console.WriteLine("Receiver wire self-test passed");
+    }
+
+    private static void TestVideoModeContract()
+    {
+        Check(VideoMode.TryParse("1280x720@30", out var p720) &&
+              p720 == new VideoMode(1280, 720, 30), "720p30 mode remains supported");
+        Check(VideoMode.TryParse("1920x1080@30", out var p1080) &&
+              p1080 == new VideoMode(1920, 1080, 30), "1080p30 mode remains supported");
+        Check(VideoMode.TryParse("1920x1080@60", out var p1080_60) &&
+              p1080_60 == new VideoMode(1920, 1080, 60), "1080p60 mode parses with its actual rate");
+        Check(!VideoMode.TryParse("1280x720@60", out _), "unadvertised 720p60 mode is rejected");
     }
 
     private static async Task TestCameraPipeAsync()

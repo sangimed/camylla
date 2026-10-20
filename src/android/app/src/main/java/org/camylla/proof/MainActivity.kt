@@ -485,7 +485,8 @@ class MainActivity : Activity() {
         }
         val canonical = service?.cameraStatus ?: CameraStatus()
         val active = value.state in listOf("Starting", "Binding", "Capturing")
-        if (active && canonical.mode.isNotEmpty()) selectedMode = CaptureService.Mode.fromName(canonical.mode)
+        if (active && canonical.mode.isNotEmpty()) selectedMode = CaptureService.Mode.entries.find { it.label == value.requestedMode }
+            ?: CaptureService.Mode.fromName(canonical.mode)
         focusBadge.visibility = if (value.state == "Capturing") View.VISIBLE else View.GONE
         focusBadge.text = "Focus: ${canonical.focus} · ${String.format(Locale.US, "%.2f", value.zoomRatio)}×"
         val currentCamera = cameraList.find { it.id == canonical.camera.ifEmpty { CameraSettings(this).preferredCamera } } ?: cameraList.firstOrNull()
@@ -493,7 +494,7 @@ class MainActivity : Activity() {
             lensChoice.text = "Camera\n${currentCamera?.let { "${it.label.substringBefore(" · ")} · ${it.id}" } ?: "Unavailable"}"
             lensChoice.contentDescription = "Optical camera: ${currentCamera?.label ?: "Unavailable"}"
             lensChoice.isEnabled = cameraList.isNotEmpty() && value.state !in listOf("Starting", "Binding")
-            modeChoice.text = "Video\n${if (selectedMode == CaptureService.Mode.HD) "720p" else "1080p"} · 30 FPS${if (value.state == "Binding") " · Applying" else ""}"
+            modeChoice.text = "Video\n${if (active) value.effectiveMode.ifEmpty { selectedMode.label } else selectedMode.label}${if (value.state == "Binding") " · Applying" else ""}"
             modeChoice.contentDescription = "Video mode: ${if (active) value.requestedMode else selectedMode.label}"
             modeChoice.isEnabled = currentCamera != null && value.state !in listOf("Starting", "Binding")
             startButton.isEnabled = !active && trustedDesktops.isNotEmpty()
@@ -522,12 +523,13 @@ class MainActivity : Activity() {
             ${if (trustError.isNotEmpty()) trustError else ""}
             State: ${value.state}${if (value.error.isNotEmpty()) " — ${value.error}" else ""}
             Requested: ${value.requestedMode}
+            Effective mode: ${value.effectiveMode}${if (value.fallbackReason.isNotEmpty()) " — ${value.fallbackReason}" else ""}
             Camera: ${value.camera}
             Encoded resolution: ${value.resolution}
             Encoder: ${value.codec} at ${value.bitrate} bit/s
             Encoded FPS (5 s): ${String.format(Locale.US, "%.1f", value.fps)}
             Frames: ${value.frames}  Keyframes: ${value.keyframes}
-            Timestamp: ${value.timestampUs} μs  Gaps >50 ms: ${value.timestampGaps}
+            Timestamp: ${value.timestampUs} μs  Gaps >50 ms: ${value.timestampGaps}  Duplicate PTS: ${value.duplicateTimestamps}
             Elapsed: ${value.elapsedSeconds} s
             AF: ${value.autofocus}  Zoom: ${String.format(Locale.US, "%.2f", value.zoomRatio)}x
             Transform rotation: ${value.rotationDegrees}°  Thermal status: ${value.thermalStatus}

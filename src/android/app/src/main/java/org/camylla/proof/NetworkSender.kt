@@ -35,7 +35,9 @@ class NetworkSender(
     private val onCameraSession: (String) -> Unit = {},
     private val onCameraCommand: (JSONObject, (JSONObject) -> Unit) -> Unit = { _, _ -> },
     private val onDesktopStop: () -> Unit = {},
+    private var supportedModes: List<String> = listOf("1280x720@30", "1920x1080@30"),
 ) : AutoCloseable {
+    private data class StartConfig(val mode: String, val lens: String, val generation: Int, val modes: List<String>)
     private data class PendingUnit(val payload: ByteArray, val ptsUs: Long, val flag: Int,
                                    val queuedNs: Long, val generation: Int)
     private val lock = Object()
@@ -82,7 +84,7 @@ class NetworkSender(
 
     init {
         require(host.isNotBlank() && !peer.revoked && identity.desktops().any { it.id == peer.id && !it.revoked })
-        require(mode in listOf("1280x720@30", "1920x1080@30") && lens in listOf("rear", "front"))
+        require(mode in supportedModes && lens in listOf("rear", "front"))
         worker.start()
     }
 
@@ -91,10 +93,11 @@ class NetworkSender(
     /** Skip only the current backoff. The worker still owns all connection attempts. */
     fun retryNow() { if (!stopping) retryWaiter.retryNow() }
 
-    fun reconfigure(nextMode: String, nextLens: String, nextGeneration: Int) = synchronized(lock) {
+    fun reconfigure(nextMode: String, nextLens: String, nextGeneration: Int, nextModes: List<String> = supportedModes) = synchronized(lock) {
         cameraRecord(JSONObject().put("type", "camera_changing").put("generation", nextGeneration))
         appliedCameraGeneration = 0
-        mode = nextMode; lens = nextLens; cameraGeneration = nextGeneration; reconfigured = true
+        require(nextMode in nextModes)
+        mode = nextMode; lens = nextLens; cameraGeneration = nextGeneration; supportedModes = nextModes; reconfigured = true
         generation++; config = null
         resetLocked()
     }
@@ -169,16 +172,16 @@ class NetworkSender(
                 val control = connect(CONTROL_PORT)
                 controlSocket = control
                 progress = progress.copy(state = "Authenticating")
-                val initial = synchronized(lock) { Triple(mode, lens, cameraGeneration) }
+                val initial = synchronized(lock) { StartConfig(mode, lens, cameraGeneration, supportedModes.toList()) }
                 val hello = JSONObject().put("type", "start").put("version", M4Wire.VERSION)
-                    .put("codec", "h264").put("mode", initial.first).put("lens", initial.second)
-                    .put("modes", JSONArray(listOf("1280x720@30", "1920x1080@30")))
+                    .put("codec", "h264").put("mode", initial.mode).put("lens", initial.lens)
+                    .put("modes", JSONArray(initial.modes))
                     .put("phone_id", identity.phoneId).put("client_nonce", ProductIdentity.randomHex(16))
                 writeControl(control, hello.toString())
                 val welcome = JSONObject(M4Wire.readControl(control.inputStream))
                 if (welcome.optString("type") != "started" || welcome.optInt("version") != M4Wire.VERSION ||
-                    welcome.optString("mode") != initial.first || welcome.optString("codec") != "h264" ||
-                    welcome.optInt("fps") != 30)
+                    welcome.optString("mode") != initial.mode || welcome.optString("codec") != "h264" ||
+                    welcome.optInt("fps") != initial.mode.substringAfterLast('@').toIntOrNull())
                     throw IllegalStateException("Capability negotiation rejected")
                 M4Wire.record(welcome, "started", "session_id", "client_nonce", "server_nonce", "video_ticket", "codec", "mode", "fps")
                 require(welcome.getString("client_nonce") == hello.getString("client_nonce"))
@@ -202,7 +205,7 @@ class NetworkSender(
                     .apply { isDaemon = true; start() }
                 if (control.isClosed) throw java.io.IOException("Control session closed")
                 var ticket = welcome.getString("video_ticket")
-                var ticketGeneration = initial.third
+                var ticketGeneration = initial.generation
                 while (!stopping && !control.isClosed) {
                 try {
                 val video = connect(VIDEO_PORT)

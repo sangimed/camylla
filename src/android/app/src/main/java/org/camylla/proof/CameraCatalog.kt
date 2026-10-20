@@ -52,7 +52,7 @@ internal data class CameraEntry(val id: String, val label: String, val facing: I
             if (manualSensor && iso != null) CameraOption("iso", "ISO", iso.lower.toDouble(), iso.upper.toDouble(), 1.0, "ISO")
                 else unsupported("iso", "ISO", "Manual sensor controls not exposed"),
             if (manualSensor && exposure != null) CameraOption("shutter", "Exposure time", exposure.lower / 1_000_000.0,
-                minOf(exposure.upper / 1_000_000.0, 1000.0 / 30), 0.001, "ms (30 FPS limit)")
+                minOf(exposure.upper / 1_000_000.0, 1000.0 / mode.fps), 0.001, "ms (${mode.fps} FPS limit)")
                 else unsupported("shutter", "Exposure time", "Manual sensor controls not exposed"),
             choices("wbMode", "White balance", c.get(C.CONTROL_AWB_AVAILABLE_MODES), mapOf(
                 R.CONTROL_AWB_MODE_AUTO to "Auto", R.CONTROL_AWB_MODE_INCANDESCENT to "Incandescent",
@@ -95,9 +95,11 @@ internal object CameraCatalog {
             val streams = c.get(C.SCALER_STREAM_CONFIGURATION_MAP) ?: return@runCatching null
             val sizes = streams.getOutputSizes(SurfaceTexture::class.java).toSet()
             val fps = c.get(C.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
+            val fpsPairs = fps.map { it.lower to it.upper }
             val modes = CaptureService.Mode.entries.filter {
-                it.size in sizes && fps.any { r -> r.contains(30) } &&
-                    streams.getOutputMinFrameDuration(SurfaceTexture::class.java, it.size) <= 33_333_334L
+                CaptureModeCapability.supported(it.size in sizes, fpsPairs,
+                    streams.getOutputMinFrameDuration(SurfaceTexture::class.java, it.size), it.fps) &&
+                    AvcEncoder.supports(it.size.width, it.size.height, it.fps)
             }
             if (modes.isEmpty()) return@runCatching null
             val facing = c.get(C.LENS_FACING) ?: C.LENS_FACING_EXTERNAL

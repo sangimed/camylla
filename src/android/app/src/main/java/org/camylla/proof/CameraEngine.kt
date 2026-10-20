@@ -258,8 +258,10 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         if (Build.VERSION.SDK_INT >= 31 && entry.characteristics.get(C.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES)?.contains(R.SCALER_ROTATE_AND_CROP_NONE) == true)
             put(builder, R.SCALER_ROTATE_AND_CROP, R.SCALER_ROTATE_AND_CROP_NONE)
         val ranges = entry.characteristics.get(C.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
-        val fps = ranges.filter { it.contains(30) }.minByOrNull { it.upper - it.lower } ?: error("30 FPS range unavailable")
-        put(builder, R.CONTROL_AE_TARGET_FPS_RANGE, fps)
+        val fpsRange = ranges.filter { it.contains(mode.fps) }
+            .minWithOrNull(compareBy<Range<Int>> { if (it.lower == mode.fps && it.upper == mode.fps) 0 else 1 }
+                .thenBy { it.upper - it.lower }) ?: error("${mode.fps} FPS range unavailable")
+        put(builder, R.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
         val afMode = if (tappedFocus) R.CONTROL_AF_MODE_AUTO else desired.getValue("focusMode").toInt()
         put(builder, R.CONTROL_AF_MODE, afMode); put(builder, R.CONTROL_AF_TRIGGER, R.CONTROL_AF_TRIGGER_IDLE)
         if (afMode == R.CONTROL_AF_MODE_OFF && options["focusDistance"]?.reason == null) put(builder, R.LENS_FOCUS_DISTANCE, desired.getValue("focusDistance").toFloat())
@@ -270,7 +272,7 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         if (aeMode == R.CONTROL_AE_MODE_OFF) {
             put(builder, R.SENSOR_SENSITIVITY, desired.getValue("iso").toInt())
             put(builder, R.SENSOR_EXPOSURE_TIME, (desired.getValue("shutter") * 1_000_000).toLong())
-            put(builder, R.SENSOR_FRAME_DURATION, 33_333_333L)
+            put(builder, R.SENSOR_FRAME_DURATION, 1_000_000_000L / mode.fps)
         } else if (options["ev"]?.reason == null) put(builder, R.CONTROL_AE_EXPOSURE_COMPENSATION, desired.getValue("ev").toInt())
         put(builder, R.CONTROL_AWB_MODE, desired.getValue("wbMode").toInt())
         if (options["wbLock"]?.reason == null) put(builder, R.CONTROL_AWB_LOCK, desired["wbLock"] == 1.0)

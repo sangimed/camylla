@@ -2,6 +2,7 @@ package org.camylla.proof
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Handler
 import android.os.Looper
@@ -14,20 +15,23 @@ import java.io.ByteArrayOutputStream
 
 data class EncodedProgress(
     val frames: Long, val keyframes: Long, val fps: Double, val timestampUs: Long,
-    val timestampGaps: Long, val sinkBytes: Long, val sinkLimitReached: Boolean,
+    val timestampGaps: Long, val duplicateTimestamps: Long, val sinkBytes: Long, val sinkLimitReached: Boolean,
 )
 
 /** Surface input and output draining are kept separate from CameraX session ownership. */
 class AvcEncoder(
     width: Int,
     height: Int,
+    private val fps: Int,
     output: File,
     private val onUpdate: (EncodedProgress) -> Unit,
     private val onError: (String) -> Unit,
     private val onCodecConfig: (ByteArray) -> Unit = {},
     private val onAccessUnit: (ByteArray, Long, Boolean) -> Unit = { _, _, _ -> },
 ) : AutoCloseable {
-    private val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+    private val selectedCodecName = encoderName(width, height, fps)
+        ?: throw IllegalArgumentException("No AVC encoder supports ${width}x${height}@${fps}")
+    private val codec = MediaCodec.createByCodecName(selectedCodecName)
     private val counter = FrameCounter()
     private val sink = DiagnosticSink(output)
     private val callbackHandler = Handler(Looper.getMainLooper())
@@ -60,7 +64,7 @@ class AvcEncoder(
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, targetBitrate)
-                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
             }
@@ -124,17 +128,17 @@ class AvcEncoder(
                                     partial.write(bytes)
                                     partialKey = partialKey || info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
                                     if (info.flags and MediaCodec.BUFFER_FLAG_PARTIAL_FRAME != 0) continue
-                                    onAccessUnit(partial.toByteArray(), info.presentationTimeUs, partialKey)
+                                    val unique = counter.add(info.presentationTimeUs, partialKey)
+                                    if (unique) onAccessUnit(partial.toByteArray(), info.presentationTimeUs, partialKey)
                                     partial.reset()
-                                    counter.add(info.presentationTimeUs, partialKey)
                                     partialKey = false
-                                    if (counter.frames % 30L == 0L) {
+                                    if (unique && counter.frames % 30L == 0L) {
                                         Log.i(TAG, "frames=${counter.frames} fps=${"%.1f".format(counter.fps())} ptsUs=${counter.lastTimestampUs} gaps=${counter.timestampGaps} sinkBytes=${sink.bytes}")
                                     }
-                                    if (counter.frames % 10L == 0L) {
+                                    if (unique && counter.frames % 10L == 0L) {
                                         val progress = EncodedProgress(
                                             counter.frames, counter.keyframes, counter.fps(),
-                                            counter.lastTimestampUs, counter.timestampGaps,
+                                            counter.lastTimestampUs, counter.timestampGaps, counter.duplicateTimestamps,
                                             sink.bytes, sink.limitReached,
                                         )
                                         callbackHandler.post { onUpdate(progress) }
@@ -168,5 +172,23 @@ class AvcEncoder(
         surface.release()
     }
 
-    companion object { private const val TAG = "CamyllaProof" }
+    companion object {
+        private const val TAG = "CamyllaProof"
+        fun supports(width: Int, height: Int, fps: Int): Boolean = encoderName(width, height, fps) != null
+        private fun encoderName(width: Int, height: Int, fps: Int): String? = runCatching {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, if (width * height > 1280 * 720) 6_000_000 else 3_000_000)
+                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            }
+            val list = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+            list.findEncoderForFormat(format)?.takeIf { name ->
+                val info = list.codecInfos.first { it.name == name }
+                val type = info.supportedTypes.first { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) }
+                info.getCapabilitiesForType(type).videoCapabilities.areSizeAndRateSupported(width, height, fps.toDouble())
+            }
+        }.getOrNull()
+    }
 }

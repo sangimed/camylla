@@ -12,13 +12,14 @@ public sealed partial class MainWindow : Window
     private readonly ReceiverHost receiver = new(production: true);
     private readonly CameraPipePublisher cameraPublisher;
     private readonly CancellationTokenSource stop = new();
-    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private WriteableBitmap? imageSource;
     private Task? receiverTask;
     private bool rendering;
     private bool closing;
     private long lastPreviewTicks;
-    private long displayed;
+    // Counts frame copies and WriteableBitmap.Invalidate calls, not compositor presentation.
+    private long previewCopies;
     private string lastSessionId = "none";
     private long lastFrameEpoch;
     private string? lastError;
@@ -62,7 +63,7 @@ public sealed partial class MainWindow : Window
             receiverEventLog = new StreamWriter(Path.Combine(directory, $"receiver-v3-{stamp}.log"), false) { AutoFlush = true };
             diagnosticsLog = new StreamWriter(csvPath, false)
                 { AutoFlush = true };
-            diagnosticsLog.WriteLine("utc,state,receivedAU,decoded,displayed,superseded,queueDepth,queueHighWater,decoderErrors,networkErrors,width,height,stride,nv12ActiveBuffers,nv12BufferHighWater,ipcLive,ipcNeutral,ipcErrors,ipcQueueDepth,ipcQueueHighWater,ipcCurrentFrame,ipcClients,controlDisconnects,ipcClientDisconnects,videoConnections");
+            diagnosticsLog.WriteLine("utc,state,receivedAU,decoderOutputFrames,decodedPtsAdvances,decodedNonIncreasingPts,previewCopiesAndInvalidates,superseded,queueDepth,queueHighWater,decoderErrors,networkErrors,width,height,stride,nv12ActiveBuffers,nv12BufferHighWater,ipcLive,ipcNeutral,ipcErrors,ipcQueueDepth,ipcQueueHighWater,ipcCurrentFrame,ipcClients,controlDisconnects,ipcClientDisconnects,videoConnections");
         }
         catch (IOException error) { Debug.WriteLine(error); }
         catch (UnauthorizedAccessException error) { Debug.WriteLine(error); }
@@ -125,7 +126,7 @@ public sealed partial class MainWindow : Window
                 }
                 finally { ArrayPool<byte>.Shared.Return(bgra); }
                 lastPreviewTicks = Stopwatch.GetTimestamp();
-                displayed++;
+                previewCopies++;
             }
             var fresh = lastPreviewTicks != 0 &&
                 Stopwatch.GetElapsedTime(lastPreviewTicks) < TimeSpan.FromSeconds(2) &&
@@ -146,7 +147,7 @@ public sealed partial class MainWindow : Window
             UpdatePairingUi();
             UpdateCameraControls();
             DiagnosticsText.Text =
-                $"Received AU {snapshot.ReceivedAccessUnits} · decoded {snapshot.DecodedFrames} · displayed {displayed} " +
+                $"Received AU {snapshot.ReceivedAccessUnits} · decoder output {snapshot.DecodedFrames} · unique PTS advances {snapshot.DecodedPtsAdvances} · repeated/reordered PTS {snapshot.DecodedNonIncreasingPts} · preview copies/invalidates {previewCopies} " +
                 $"· superseded {snapshot.SupersededPreviewFrames} · queue {snapshot.FrameQueueDepth}/1 " +
                 $"· high-water {snapshot.FrameQueueHighWater} · decoder errors {snapshot.DecoderErrors} " +
                 $"· network errors {snapshot.NetworkErrors} · resets {snapshot.DecoderResets} " +
@@ -204,7 +205,7 @@ public sealed partial class MainWindow : Window
         try
         {
             if (diagnosticsLog.BaseStream.Length >= 1_000_000) return;
-            diagnosticsLog.WriteLine(FormattableString.Invariant($"{DateTime.UtcNow:O},{snapshot.State},{snapshot.ReceivedAccessUnits},{snapshot.DecodedFrames},{displayed},{snapshot.SupersededPreviewFrames},{snapshot.FrameQueueDepth},{snapshot.FrameQueueHighWater},{snapshot.DecoderErrors},{snapshot.NetworkErrors},{snapshot.Width},{snapshot.Height},{snapshot.Stride},{OwnedNv12Frame.ActiveBufferCount},{OwnedNv12Frame.BufferHighWater},{cameraPublisher.Published},{cameraPublisher.Neutral},{cameraPublisher.Failures},{cameraPublisher.FrameQueueDepth},{cameraPublisher.FrameQueueHighWater},{cameraPublisher.CurrentFrameCount},{cameraPublisher.ActiveClients},{snapshot.ControlDisconnects},{cameraPublisher.ClientDisconnects},{snapshot.VideoConnections}"));
+            diagnosticsLog.WriteLine(FormattableString.Invariant($"{DateTime.UtcNow:O},{snapshot.State},{snapshot.ReceivedAccessUnits},{snapshot.DecodedFrames},{snapshot.DecodedPtsAdvances},{snapshot.DecodedNonIncreasingPts},{previewCopies},{snapshot.SupersededPreviewFrames},{snapshot.FrameQueueDepth},{snapshot.FrameQueueHighWater},{snapshot.DecoderErrors},{snapshot.NetworkErrors},{snapshot.Width},{snapshot.Height},{snapshot.Stride},{OwnedNv12Frame.ActiveBufferCount},{OwnedNv12Frame.BufferHighWater},{cameraPublisher.Published},{cameraPublisher.Neutral},{cameraPublisher.Failures},{cameraPublisher.FrameQueueDepth},{cameraPublisher.FrameQueueHighWater},{cameraPublisher.CurrentFrameCount},{cameraPublisher.ActiveClients},{snapshot.ControlDisconnects},{cameraPublisher.ClientDisconnects},{snapshot.VideoConnections}"));
         }
         catch (IOException error) { Debug.WriteLine(error); diagnosticsLog.Dispose(); diagnosticsLog = null; }
     }

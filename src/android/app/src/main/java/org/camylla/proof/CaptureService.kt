@@ -30,7 +30,11 @@ class CaptureService : LifecycleService() {
     @Volatile private var networkSender: NetworkSender? = null
     private var entry: CameraEntry? = null
     private var mode = Mode.HD
+    private var requestedMode = Mode.HD
+    private var fallbackPolicy = CaptureFallbackPolicy()
+    private var fallbackReason = ""
     @Volatile private var generation = 0
+    @Volatile private var lastEncodedProgressMs = 0L
     private var sessionStartMs = 0L
     private var previewSurface: Surface? = null
     private var previewWidth = 1
@@ -103,6 +107,7 @@ class CaptureService : LifecycleService() {
                         it.facing == if (intent.getIntExtra(EXTRA_LENS, CameraSelector.LENS_FACING_BACK) == CameraSelector.LENS_FACING_BACK) CameraCharacteristics.LENS_FACING_BACK else CameraCharacteristics.LENS_FACING_FRONT
                     } ?: available.firstOrNull() ?: error("No camera exposes a supported 30 FPS mode")
                     mode = Mode.fromName(intent.getStringExtra(EXTRA_MODE) ?: settings.preferredMode)
+                    requestedMode = mode; fallbackPolicy = CaptureFallbackPolicy(); fallbackReason = ""
                     require(mode in entry!!.modes) { "Selected mode unavailable on this lens" }
                     startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
                     // A foreground service does not keep custom encoder/network threads
@@ -112,7 +117,7 @@ class CaptureService : LifecycleService() {
                         "Camylla:camera-session").apply { setReferenceCounted(false); acquire() }
                     sessionStartMs = SystemClock.elapsedRealtime()
                     captureAuthorization = java.util.UUID.randomUUID().toString(); capturePeer = peer.id
-                    snapshot = StatsSnapshot(state = "Starting", requestedMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
+                    snapshot = StatsSnapshot(state = "Starting", requestedMode = requestedMode.label, effectiveMode = mode.label, thermalStatus = thermalManager?.currentThermalStatus ?: -1)
                     networkSender = NetworkSender(identity, peer, mode.label, facing(), { encoder?.requestSyncFrame() },
                         { id -> main.post { if (networkSender?.currentSession() == id) {
                             advertisedSession = null
@@ -120,7 +125,8 @@ class CaptureService : LifecycleService() {
                             publishNetwork(true)
                         } } },
                         { message, reply -> main.post { remote(message, reply) } },
-                        { main.post { if (sessionStartMs != 0L) { endSession(); stopSelf() } } })
+                        { main.post { if (sessionStartMs != 0L) { endSession(); stopSelf() } } },
+                        entry!!.modes.map { it.label })
                     settings.preferredPeer = peer.id
                     bindCamera(settings.values(entry!!.id, mode.name))
                 } catch (error: Exception) { endSession(); fail(error.message ?: "Capture setup failed"); stopSelf() }
@@ -135,13 +141,15 @@ class CaptureService : LifecycleService() {
         if (sessionStartMs == 0L) { done(null, "Capture stopped"); return }
         val selected = cameras().find { it.id == id } ?: run { done(null, "Camera unavailable"); return }
         if (mode !in selected.modes) { done(null, "Selected video mode unavailable on this lens"); snapshot = snapshot.copy(error = "Choose a compatible mode before changing lens"); return }
-        saveSettings(); entry = selected; bindCamera(settings.values(id, mode.name), done)
+        saveSettings(); entry = selected; requestedMode = mode; fallbackPolicy = CaptureFallbackPolicy(); fallbackReason = ""
+        bindCamera(settings.values(id, mode.name), done)
     }
     fun setMode(value: Mode) { changeMode(value) }
     private fun changeMode(value: Mode, done: (Double?, String?) -> Unit = { _, _ -> }) {
         if (sessionStartMs == 0L) { done(null, "Capture stopped"); return }
         if (value !in entry!!.modes) { done(null, "Mode unavailable on this lens"); return }
-        saveSettings(); mode = value; bindCamera(settings.values(entry!!.id, mode.name), done)
+        saveSettings(); mode = value; requestedMode = value; fallbackPolicy = CaptureFallbackPolicy(); fallbackReason = ""
+        bindCamera(settings.values(entry!!.id, mode.name), done)
     }
     fun setZoom(linear: Float) { val o = cameraStatus.options.find { it.key == "zoom" } ?: return; control("zoom", o.min + linear.coerceIn(0f, 1f) * (o.max - o.min)) }
     internal fun control(key: String, value: Double, done: (Double?, String?) -> Unit = { _, _ -> }) {
@@ -170,16 +178,20 @@ class CaptureService : LifecycleService() {
     private fun bindCamera(saved: Map<String, Double>, done: (Double?, String?) -> Unit = { _, _ -> }) {
         if (sessionStartMs == 0L) return
         val current = entry ?: return; val token = ++generation
-        networkSender?.reconfigure(mode.label, facing(), token)
+        val bindStartedMs = SystemClock.elapsedRealtime()
+        lastEncodedProgressMs = 0L
+        if (mode == Mode.FHD60) monitorSixtyFps(token, current, bindStartedMs)
+        networkSender?.reconfigure(mode.label, facing(), token, current.modes.map { it.label })
         engine?.close(); engine = null; encoder?.close(); encoder = null
         cameraStatus = CameraStatus(camera = current.id, mode = mode.name, generation = token, message = "Changing camera")
-        snapshot = snapshot.copy(state = "Binding", requestedMode = mode.label, camera = current.label, error = "")
+        snapshot = snapshot.copy(state = "Binding", requestedMode = requestedMode.label, effectiveMode = mode.label, fallbackReason = fallbackReason, camera = current.label, error = "")
         advertisedGeneration = 0
         try {
             val file = File(File(cacheDir, "diagnostics").apply { mkdirs() }, "capture-${System.currentTimeMillis()}.h264")
             file.parentFile?.listFiles { f -> f.extension == "h264" }?.sortedByDescending { it.lastModified() }?.drop(2)?.forEach { it.delete() }
-            val activeEncoder = AvcEncoder(mode.size.width, mode.size.height, file,
+            val activeEncoder = AvcEncoder(mode.size.width, mode.size.height, mode.fps, file,
                 onUpdate = { p -> if (token == generation) {
+                    lastEncodedProgressMs = SystemClock.elapsedRealtime()
                     val active = encoder
                     if (active != null) {
                         val underPressure = networkSender?.stats()?.state == "Recovering" ||
@@ -188,7 +200,12 @@ class CaptureService : LifecycleService() {
                         active.setBitrate(wanted)
                         snapshot = snapshot.copy(bitrate = active.configuredBitrate, selectedBitrate = active.selectedBitrate)
                     }
-                    snapshot = snapshot.copy(frames = p.frames, keyframes = p.keyframes, fps = p.fps, timestampUs = p.timestampUs, timestampGaps = p.timestampGaps, sinkBytes = p.sinkBytes, sinkLimitReached = p.sinkLimitReached)
+                    snapshot = snapshot.copy(frames = p.frames, keyframes = p.keyframes, fps = p.fps, timestampUs = p.timestampUs, timestampGaps = p.timestampGaps, duplicateTimestamps = p.duplicateTimestamps, sinkBytes = p.sinkBytes, sinkLimitReached = p.sinkLimitReached)
+                    if (fallbackPolicy.shouldFallback(SystemClock.elapsedRealtime() - bindStartedMs, p.fps, mode.fps)) main.post {
+                        if (token == generation && mode == Mode.FHD60) {
+                            fallbackTo30Claimed("1080p60 delivered ${"%.1f".format(p.fps)} FPS; switched to 1080p30 for stability.", current)
+                        }
+                    }
                     publishNetwork()
                 } },
                 onError = { error -> main.post { if (token == generation) { endSession(); fail(error) } } },
@@ -200,21 +217,48 @@ class CaptureService : LifecycleService() {
                     cameraStatus = state; snapshot = snapshot.copy(autofocus = state.focus, zoomRatio = (state.applied["zoom"] ?: 1.0).toFloat(), rotationDegrees = state.previewRotation); publishNetwork()
                 } } },
                 { error -> main.post { if (token == generation) {
-                    done(null, error)
                     if (sessionStartMs != 0L && (phoneLocked() || cameraInterruptedByLock)) {
+                        done(null, error)
                         suspendCamera(error)
                         if (!phoneLocked()) main.post(resumeCamera)
-                    }
-                    else { endSession(); fail(error) }
+                    } else if (mode == Mode.FHD60 && fallbackPolicy.claimFallback()) {
+                        fallbackTo30Claimed("1080p60 camera startup failed (${error}); using 1080p30.", current, done)
+                    } else { done(null, error); endSession(); fail(error) }
                 } } },
                 { main.post { if (token == generation && sessionStartMs != 0L) {
                     cameraInterruptedByLock = false
-                    snapshot = snapshot.copy(state = "Capturing", resolution = "${mode.size.width}x${mode.size.height}", codec = activeEncoder.codecName, bitrate = activeEncoder.configuredBitrate, selectedBitrate = activeEncoder.selectedBitrate, outputFile = file.absolutePath)
-                    settings.preferredCamera = current.id; settings.preferredMode = mode.name
+                    snapshot = snapshot.copy(state = "Capturing", requestedMode = requestedMode.label, effectiveMode = mode.label, fallbackReason = fallbackReason, resolution = "${mode.size.width}x${mode.size.height}", codec = activeEncoder.codecName, bitrate = activeEncoder.configuredBitrate, selectedBitrate = activeEncoder.selectedBitrate, outputFile = file.absolutePath)
+                    settings.preferredCamera = current.id; settings.preferredMode = requestedMode.name
                     done(cameras().indexOfFirst { it.id == current.id }.toDouble(), null); publishNetwork(true)
                 } } })
             engine?.attachPreview(previewSurface, previewWidth, previewHeight); engine?.displayRotation(displayDegrees)
-        } catch (error: Exception) { done(null, error.message); endSession(); fail("Camera configuration: ${error.message}") }
+        } catch (error: Exception) {
+            if (mode == Mode.FHD60 && fallbackPolicy.claimFallback()) {
+                fallbackTo30Claimed("1080p60 encoder/camera configuration failed (${error.message}); using 1080p30.", current, done)
+            } else { done(null, error.message); endSession(); fail("Camera configuration: ${error.message}") }
+        }
+    }
+    private fun fallbackTo30Claimed(reason: String, current: CameraEntry, done: (Double?, String?) -> Unit = { _, _ -> }) {
+        if (mode != Mode.FHD60 || sessionStartMs == 0L) return
+        fallbackReason = reason; mode = Mode.FHD
+        bindCamera(settings.values(current.id, mode.name), done)
+    }
+    private fun monitorSixtyFps(token: Int, current: CameraEntry, bindStartedMs: Long) {
+        val watchdog = object : Runnable {
+            override fun run() {
+                if (token != generation || mode != Mode.FHD60 || sessionStartMs == 0L) return
+                val now = SystemClock.elapsedRealtime()
+                val lastProgress = lastEncodedProgressMs
+                val stalled = now - bindStartedMs >= 5_000 &&
+                    (lastProgress == 0L || now - lastProgress >= 5_000)
+                if (stalled && fallbackPolicy.claimFallback()) {
+                    fallbackTo30Claimed("1080p60 produced no unique encoded-frame progress for five seconds; using 1080p30.", current)
+                    return
+                }
+                main.postDelayed(this, 1_000)
+            }
+        }
+        main.postDelayed(watchdog, 1_000)
     }
     private fun publishNetwork(force: Boolean = false) {
         val sender = networkSender ?: return; val id = sender.currentSession() ?: return; val state = cameraStatus
@@ -223,7 +267,7 @@ class CaptureService : LifecycleService() {
             advertisedSession = id; advertisedGeneration = state.generation
             val cameras = cameras()
             val cameraOption = CameraOption("camera", "Optical camera selection", 0.0, (cameras.size - 1).toDouble(), choices = cameras.mapIndexed { i, c -> i to c.label }.toMap())
-            val modeOption = CameraOption("mode", "Video mode", 0.0, 1.0, choices = entry!!.modes.associate { it.ordinal to it.label })
+            val modeOption = CameraOption("mode", "Video mode", 0.0, (Mode.entries.size - 1).toDouble(), choices = entry!!.modes.associate { it.ordinal to it.label })
             for (option in listOf(cameraOption, modeOption) + state.options) sender.cameraRecord(JSONObject().put("type", "camera_capability").put("generation", state.generation).put("option", option.json()))
         }
         if (force || SystemClock.elapsedRealtime() - lastStatusSent >= 250) {
@@ -284,7 +328,7 @@ class CaptureService : LifecycleService() {
         // one network worker. Invalidate callbacks before releasing camera resources.
         saveSettings(); generation++; cameraSuspended = true
         engine?.close(); engine = null; encoder?.close(); encoder = null
-        networkSender?.reconfigure(mode.label, facing(), generation)
+        networkSender?.reconfigure(mode.label, facing(), generation, entry?.modes?.map { it.label } ?: listOf(mode.label))
         cameraStatus = cameraStatus.copy(generation = generation, pending = emptySet(),
             message = "Camera paused while phone locked; unlock to resume")
         snapshot = snapshot.copy(state = "Binding", error = reason)
@@ -305,8 +349,8 @@ class CaptureService : LifecycleService() {
         stopForeground(Service.STOP_FOREGROUND_REMOVE); snapshot = snapshot.copy(state = "Stopped")
     }
     override fun onDestroy() { endSession(); unregisterReceiver(screenReceiver); thermalListener?.let { thermalManager?.removeThermalStatusListener(it) }; super.onDestroy() }
-    enum class Mode(val label: String, val size: Size) {
-        HD("1280x720@30", Size(1280,720)), FHD("1920x1080@30", Size(1920,1080));
+    enum class Mode(val label: String, val size: Size, val fps: Int) {
+        HD("1280x720@30", Size(1280,720), 30), FHD("1920x1080@30", Size(1920,1080), 30), FHD60("1920x1080@60", Size(1920,1080), 60);
         companion object { fun fromName(name: String?): Mode = entries.find { it.name == name } ?: HD }
     }
     companion object {

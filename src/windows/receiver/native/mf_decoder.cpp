@@ -21,6 +21,7 @@ struct Decoder {
     ComPtr<IMFTransform> transform;
     std::uint32_t width{};
     std::uint32_t height{};
+    std::uint32_t frames_per_second{};
     std::uint32_t stride{};
     FrameCallback callback{};
     void* context{};
@@ -59,7 +60,7 @@ HRESULT CreateDecoder(Decoder& decoder) {
     if (FAILED(result)) return result;
     result = MFSetAttributeSize(input.Get(), MF_MT_FRAME_SIZE, decoder.width, decoder.height);
     if (FAILED(result)) return result;
-    result = MFSetAttributeRatio(input.Get(), MF_MT_FRAME_RATE, 30, 1);
+    result = MFSetAttributeRatio(input.Get(), MF_MT_FRAME_RATE, decoder.frames_per_second, 1);
     if (FAILED(result)) return result;
     result = decoder.transform->SetInputType(0, input.Get(), 0);
     if (FAILED(result)) return result;
@@ -126,8 +127,9 @@ HRESULT Drain(Decoder& decoder, std::uint32_t& count) {
 }  // namespace
 
 extern "C" __declspec(dllexport) HRESULT __cdecl CamyllaDecoderCreate(
-    std::uint32_t width, std::uint32_t height, FrameCallback callback, void* context, void** handle) {
-    if (!handle || !callback || width == 0 || height == 0) return E_INVALIDARG;
+    std::uint32_t width, std::uint32_t height, std::uint32_t frames_per_second,
+    FrameCallback callback, void* context, void** handle) {
+    if (!handle || !callback || width == 0 || height == 0 || frames_per_second == 0) return E_INVALIDARG;
     *handle = nullptr;
     HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(result)) return result;
@@ -136,6 +138,7 @@ extern "C" __declspec(dllexport) HRESULT __cdecl CamyllaDecoderCreate(
     auto decoder = std::make_unique<Decoder>();
     decoder->width = width;
     decoder->height = height;
+    decoder->frames_per_second = frames_per_second;
     decoder->callback = callback;
     decoder->context = context;
     result = CreateDecoder(*decoder);
@@ -170,7 +173,7 @@ extern "C" __declspec(dllexport) HRESULT __cdecl CamyllaDecoderPush(
     if (FAILED(result)) { CoUninitialize(); return result; }
     result = sample->SetSampleTime(static_cast<LONGLONG>(pts_us) * 10);
     if (FAILED(result)) { CoUninitialize(); return result; }
-    result = sample->SetSampleDuration(333333);
+    result = sample->SetSampleDuration(10'000'000LL / decoder.frames_per_second);
     if (FAILED(result)) { CoUninitialize(); return result; }
     result = decoder.transform->ProcessInput(0, sample.Get(), 0);
     if (result == MF_E_NOTACCEPTING) {
