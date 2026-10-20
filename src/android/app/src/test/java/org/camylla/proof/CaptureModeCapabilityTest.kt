@@ -20,12 +20,23 @@ class CaptureModeCapabilityTest {
         assertFalse(CaptureFallbackPolicy().shouldFallback(5_000, 24.0, 30))
     }
 
-    @Test fun encodedCadenceCountsOnlyDistinctIncreasingPresentationTimestamps() {
+    @Test fun encodedCadenceCountsOnlyDistinctPresentationTimestamps() {
         val counter = FrameCounter()
         repeat(60) { counter.add(it * 16_667L, false) }
         repeat(60) { counter.add((it - 1).coerceAtLeast(0) * 16_667L, false) }
         assertEquals(60, counter.frames)
         assertEquals(59.998, counter.fps(), 0.02)
         assertEquals(60, counter.duplicateTimestamps)
+    }
+
+    @Test fun outOfOrderUniquePtsAreAcceptedAndCadenceUsesTimestampBounds() {
+        val counter = FrameCounter()
+        assertTrue(counter.add(0, false))
+        assertTrue(counter.add(33_333, false))
+        assertTrue(counter.add(16_667, false))
+        assertFalse(counter.add(16_667, false))
+        assertEquals(3, counter.frames)
+        assertEquals(1, counter.duplicateTimestamps)
+        assertEquals(60.0, counter.fps(), 0.01)
     }
 }

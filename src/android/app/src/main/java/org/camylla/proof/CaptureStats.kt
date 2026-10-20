@@ -1,6 +1,8 @@
 package org.camylla.proof
 
 import java.util.ArrayDeque
+import java.util.LinkedHashSet
+import java.util.TreeSet
 
 data class StatsSnapshot(
     val state: String = "Stopped",
@@ -56,7 +58,8 @@ data class QualityState(val selectedMode: String, val effectiveMode: String, val
 
 /** Counts encoded access units, not requested camera frames. The gap count is diagnostic, not proof of a dropped frame. */
 class FrameCounter(private val windowUs: Long = 5_000_000L) {
-    private val recent = ArrayDeque<Long>()
+    private val seen = LinkedHashSet<Long>()
+    private val cadence = TreeSet<Long>()
     var frames = 0L
         private set
     var keyframes = 0L
@@ -69,21 +72,24 @@ class FrameCounter(private val windowUs: Long = 5_000_000L) {
         private set
 
     fun add(timestampUs: Long, keyframe: Boolean): Boolean {
-        if (lastTimestampUs >= 0 && timestampUs <= lastTimestampUs) {
+        if (!seen.add(timestampUs)) {
             duplicateTimestamps++
             return false
         }
-        if (lastTimestampUs >= 0 && timestampUs - lastTimestampUs > 50_000) timestampGaps++
+        if (seen.size > 600) seen.remove(seen.first())
+        if (lastTimestampUs >= 0 && timestampUs > lastTimestampUs && timestampUs - lastTimestampUs > 50_000) timestampGaps++
         lastTimestampUs = timestampUs
         frames++
         if (keyframe) keyframes++
-        recent.addLast(timestampUs)
-        while (recent.isNotEmpty() && (timestampUs - recent.first() > windowUs || recent.size > 600)) recent.removeFirst()
+        val newest = maxOf(cadence.lastOrNull() ?: timestampUs, timestampUs)
+        cadence.add(timestampUs)
+        cadence.headSet(newest - windowUs, false).clear()
+        while (cadence.size > 600) cadence.pollFirst()
         return true
     }
 
-    fun fps(): Double = if (recent.size < 2) 0.0 else {
-        val span = recent.last() - recent.first()
-        if (span <= 0) 0.0 else (recent.size - 1) * 1_000_000.0 / span
+    fun fps(): Double = if (cadence.size < 2) 0.0 else {
+        val span = cadence.last() - cadence.first()
+        if (span <= 0) 0.0 else (cadence.size - 1) * 1_000_000.0 / span
     }
 }
