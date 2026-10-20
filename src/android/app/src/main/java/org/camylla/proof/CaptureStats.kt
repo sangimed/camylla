@@ -5,6 +5,8 @@ import java.util.ArrayDeque
 data class StatsSnapshot(
     val state: String = "Stopped",
     val requestedMode: String = "",
+    val effectiveMode: String = "",
+    val fallbackReason: String = "",
     val camera: String = "",
     val resolution: String = "",
     val codec: String = "",
@@ -15,6 +17,7 @@ data class StatsSnapshot(
     val fps: Double = 0.0,
     val timestampUs: Long = -1,
     val timestampGaps: Long = 0,
+    val duplicateTimestamps: Long = 0,
     val elapsedSeconds: Long = 0,
     val rotationDegrees: Int = 0,
     val zoomRatio: Float = 1f,
@@ -33,17 +36,19 @@ data class QualityState(val selectedMode: String, val effectiveMode: String, val
         fun current(snapshot: StatsSnapshot): QualityState {
             val network = snapshot.network.state == "Recovering"
             val thermal = snapshot.thermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE
-            val slow = snapshot.elapsedSeconds >= 5 && snapshot.fps in 0.1..<27.0
+            val targetFps = snapshot.effectiveMode.substringAfterLast('@').toIntOrNull() ?: 30
+            val slow = snapshot.elapsedSeconds >= 5 && snapshot.fps in 0.1..<targetFps * 0.9
             val reduced = snapshot.selectedBitrate > 0 && snapshot.bitrate in 1..<snapshot.selectedBitrate
             val reason = when {
                 thermal && reduced -> "Thermal pressure; bitrate is temporarily reduced."
                 thermal -> "Thermal pressure; automatic quality adaptation is unavailable."
                 network && reduced -> "Network recovery in progress; bitrate is temporarily reduced."
                 network -> "Network recovery in progress; waiting for a fresh video connection."
-                slow -> "Delivered frame rate is below the 30 FPS target; automatic quality adaptation is unavailable."
+                snapshot.fallbackReason.isNotEmpty() -> snapshot.fallbackReason
+                slow -> "Delivered frame rate is below the $targetFps FPS target; automatic quality adaptation is unavailable."
                 else -> "Selected quality is active."
             }
-            return QualityState(snapshot.requestedMode, snapshot.requestedMode, snapshot.selectedBitrate, snapshot.bitrate, snapshot.fps,
+            return QualityState(snapshot.requestedMode, snapshot.effectiveMode.ifEmpty { snapshot.requestedMode }, snapshot.selectedBitrate, snapshot.bitrate, snapshot.fps,
                 network, thermal, reason)
         }
     }
@@ -58,16 +63,23 @@ class FrameCounter(private val windowUs: Long = 5_000_000L) {
         private set
     var timestampGaps = 0L
         private set
+    var duplicateTimestamps = 0L
+        private set
     var lastTimestampUs = -1L
         private set
 
-    fun add(timestampUs: Long, keyframe: Boolean) {
+    fun add(timestampUs: Long, keyframe: Boolean): Boolean {
+        if (lastTimestampUs >= 0 && timestampUs <= lastTimestampUs) {
+            duplicateTimestamps++
+            return false
+        }
         if (lastTimestampUs >= 0 && timestampUs - lastTimestampUs > 50_000) timestampGaps++
         lastTimestampUs = timestampUs
         frames++
         if (keyframe) keyframes++
         recent.addLast(timestampUs)
         while (recent.isNotEmpty() && (timestampUs - recent.first() > windowUs || recent.size > 600)) recent.removeFirst()
+        return true
     }
 
     fun fps(): Double = if (recent.size < 2) 0.0 else {
