@@ -1,10 +1,13 @@
+using Microsoft.Windows.AppLifecycle;
 using Microsoft.UI.Xaml;
 
 namespace Camylla.Desktop;
 
 public partial class App : Application
 {
+    private readonly object activationGate = new();
     private MainWindow? window;
+    private bool activationPending;
     public App()
     {
         UnhandledException += (_, args) => RecordStartupFailure(args.Exception);
@@ -21,9 +24,41 @@ public partial class App : Application
         }
         catch { /* Keep the original exception and normal crash behavior. */ }
     }
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        window = new MainWindow();
-        window.Activate();
+        var instance = AppInstance.FindOrRegisterForKey("Camylla.Desktop");
+        if (!instance.IsCurrent)
+        {
+            await instance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs());
+            Exit();
+            return;
+        }
+
+        instance.Activated += OnInstanceActivated;
+        var created = new MainWindow();
+        bool activatePending;
+        lock (activationGate)
+        {
+            window = created;
+            activatePending = activationPending;
+            activationPending = false;
+        }
+        created.Activate();
+        if (activatePending) created.ActivateFromLaunch();
+    }
+
+    private void OnInstanceActivated(object? sender, AppActivationArguments args)
+    {
+        MainWindow? current;
+        lock (activationGate)
+        {
+            current = window;
+            if (current == null)
+            {
+                activationPending = true;
+                return;
+            }
+        }
+        current.DispatcherQueue.TryEnqueue(current.ActivateFromLaunch);
     }
 }

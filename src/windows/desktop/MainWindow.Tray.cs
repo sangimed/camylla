@@ -42,6 +42,8 @@ public sealed partial class MainWindow
         Activate();
     }
 
+    internal void ActivateFromLaunch() => ShowFromTray();
+
     private void OnExit(object sender, RoutedEventArgs args) => _ = ExitAsync();
 
     private async Task ExitAsync()
