@@ -10,7 +10,7 @@ internal object CaptureModeCapability {
 internal class CaptureFallbackPolicy {
     private var used = false
     fun shouldFallback(elapsedMs: Long, measuredFps: Double, requestedFps: Int): Boolean {
-        if (used || requestedFps != 60 || elapsedMs < 5_000 || measuredFps >= requestedFps * 0.95) return false
+        if (used || requestedFps != 60 || elapsedMs < 5_000 || measuredFps >= requestedFps - 1.0) return false
         return claimFallback()
     }
     fun claimFallback(): Boolean { if (used) return false; used = true; return true }

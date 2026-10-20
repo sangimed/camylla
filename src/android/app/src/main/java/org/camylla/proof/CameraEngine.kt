@@ -258,7 +258,9 @@ internal class CameraEngine(context: Context, val entry: CameraEntry, val mode: 
         if (Build.VERSION.SDK_INT >= 31 && entry.characteristics.get(C.SCALER_AVAILABLE_ROTATE_AND_CROP_MODES)?.contains(R.SCALER_ROTATE_AND_CROP_NONE) == true)
             put(builder, R.SCALER_ROTATE_AND_CROP, R.SCALER_ROTATE_AND_CROP_NONE)
         val ranges = entry.characteristics.get(C.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES).orEmpty()
-        val fpsRange = ranges.filter { it.contains(mode.fps) }.minByOrNull { it.upper - it.lower } ?: error("${mode.fps} FPS range unavailable")
+        val fpsRange = ranges.filter { it.contains(mode.fps) }
+            .minWithOrNull(compareBy<Range<Int>> { if (it.lower == mode.fps && it.upper == mode.fps) 0 else 1 }
+                .thenBy { it.upper - it.lower }) ?: error("${mode.fps} FPS range unavailable")
         put(builder, R.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
         val afMode = if (tappedFocus) R.CONTROL_AF_MODE_AUTO else desired.getValue("focusMode").toInt()
         put(builder, R.CONTROL_AF_MODE, afMode); put(builder, R.CONTROL_AF_TRIGGER, R.CONTROL_AF_TRIGGER_IDLE)
