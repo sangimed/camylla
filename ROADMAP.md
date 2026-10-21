@@ -13,7 +13,7 @@ Detailed, executable work belongs in [GitHub Issues](https://github.com/sangimed
 
 M1 established the Windows Media Foundation virtual-camera path, M2 validated physical S21 Ultra CameraX/MediaCodec capture, and M3 validated authenticated H.264 transport to continuous Windows NV12 decoding at approximately 30 FPS. Receiver restart and phone Wi-Fi interruption recovered, with bounded queues. M4 now builds the focused desktop preview, pairing, controls, settings, and virtual-camera integration from those seams. Exact end-to-end latency and broad compatibility remain later measured gates.
 
-Product refinement priorities: [#59 — mobile UI/UX redesign](https://github.com/sangimed/camylla/issues/59) and [#61 — responsive Windows UI/UX redesign](https://github.com/sangimed/camylla/issues/61). The tap-to-focus feedback enhancement [#60](https://github.com/sangimed/camylla/issues/60) is tested, user-accepted and merged in PR #62. Additional validation and release preparation remain tracked below.
+Product refinement: [#59 — mobile UI/UX redesign](https://github.com/sangimed/camylla/issues/59) is implemented and merged in [PR #83](https://github.com/sangimed/camylla/pull/83); its emulator and CI evidence and physical-device limitations are recorded in [the Android UI redesign validation record](docs/validation/android-ui-redesign-2026-10-21.md). [#61 — responsive Windows UI/UX redesign](https://github.com/sangimed/camylla/issues/61) remains a priority. The tap-to-focus feedback enhancement [#60](https://github.com/sangimed/camylla/issues/60) is tested, user-accepted and merged in PR #62. Additional validation and release preparation remain tracked below.
 
 ## Milestones
 
