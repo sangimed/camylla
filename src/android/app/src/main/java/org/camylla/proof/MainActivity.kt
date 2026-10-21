@@ -46,11 +46,15 @@ class MainActivity : Activity() {
     private lateinit var desktops: Spinner
     private lateinit var trustControls: LinearLayout
     private lateinit var connectionStatus: TextView
+    private lateinit var consoleDetails: TextView
     private lateinit var retryConnection: Button
     private lateinit var resumeKeyChange: Button
     private var trustedDesktops: List<TrustedDesktop> = emptyList()
     private val identity get() = ProductIdentity(this)
     private var trustError = ""
+    private var selectedPage = 0
+    private var selectedSettingsCategory = -1
+    private var workspaceMode: CameraWorkspaceLayout.Mode? = null
     private var notice = ""
     private var noticeUntil = 0L
     private lateinit var previewView: SurfaceView
@@ -194,13 +198,16 @@ class MainActivity : Activity() {
             else showNotice("No key change is pending.")
         }
         resumeKeyChange.visibility = android.view.View.GONE
+        layout.removeView(resumeKeyChange)
         connections.addView(connectionManagement)
-        layout.addView(TextView(this).apply { text = "Settings & security"; MobileUi.text(this, 24f) })
-        layout.addView(TextView(this).apply { text = "Manage security keys and inspect connection diagnostics."; MobileUi.text(this, 15f, true) })
-        layout.addView(settings)
+        layout.addView(TextView(this).apply { text = "Settings"; MobileUi.text(this, 24f) })
+        val categoryIndex = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val categoryDetail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        layout.addView(categoryIndex)
+        layout.addView(categoryDetail)
         stats = TextView(this).apply { setPadding(dp(12), dp(12), dp(12), dp(12)); MobileUi.text(this, 14f, true) }
-        layout.addView(TextView(this).apply { text = "Diagnostics"; MobileUi.text(this, 20f) })
-        layout.addView(stats)
+        val diagnosticsSettings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        diagnosticsSettings.addView(stats)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(MobileUi.BACKGROUND) }
         root.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
@@ -230,9 +237,14 @@ class MainActivity : Activity() {
         header.addView(navigation)
         root.addView(header)
         root.addView(connectionStatus)
-        val body = LinearLayout(this).apply {
-            orientation = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val statusRail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        consoleDetails = TextView(this).apply { MobileUi.text(this, 13f, muted = true); contentDescription = "Camera and stream details" }
+        statusRail.addView(TextView(this).apply { text = "CONNECTION / VIDEO"; MobileUi.text(this, 11f, muted = true) })
+        statusRail.addView(consoleDetails)
+        statusRail.addView(Button(this).apply {
+            text = "Pair a PC"; MobileUi.button(this); setOnClickListener { openPairing() }
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         val previewFrame = FrameLayout(this).apply { setBackgroundColor(android.graphics.Color.BLACK) }
         previewView = SurfaceView(this).apply { contentDescription = "Camera preview. Tap to focus; pinch to zoom. Focus centre and zoom buttons are available below." }
         previewFrame.addView(previewView, FrameLayout.LayoutParams(-1,-1))
@@ -273,6 +285,8 @@ class MainActivity : Activity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         previewFrame.addView(focusBadge, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.START))
+        selections.setBackgroundColor(0xDD18181B.toInt())
+        previewFrame.addView(selections, FrameLayout.LayoutParams(-1, -2, android.view.Gravity.TOP))
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent) = true
             override fun onSingleTapUp(e: MotionEvent): Boolean {
@@ -312,7 +326,6 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(holder: SurfaceHolder) { focusTargetView.update(null); service?.attachPreview(null, 1, 1) }
         })
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        controls.addView(selections)
         controls.addView(cameraPanel)
         val drawer = ScrollView(this).apply { visibility = View.GONE }
         cameraPanel.onQuickAdjustmentOpen = { drawer.removeAllViews(); drawer.visibility = View.GONE }
@@ -327,17 +340,62 @@ class MainActivity : Activity() {
             }
             toggle.layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
         }
-        tab("Pro controls", cameraPanel.advancedView)
+        tab("Advanced controls", cameraPanel.advancedView)
         controls.addView(drawerTabs)
-        controls.addView(drawer, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.22f).toInt()))
-        if (body.orientation == LinearLayout.HORIZONTAL) {
-            body.addView(previewFrame, LinearLayout.LayoutParams(0, -1, 1f))
-            val panelWidth = minOf(dp(320), (resources.displayMetrics.widthPixels * 0.4f).toInt())
-            body.addView(ScrollView(this).apply { addView(controls) }, LinearLayout.LayoutParams(panelWidth, -1))
-        } else {
-            body.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f))
-            body.addView(controls, LinearLayout.LayoutParams(-1, -2))
+        controls.addView(drawer, LinearLayout.LayoutParams(-1, dp(180)))
+        val controlsScroll = ScrollView(this).apply { isFillViewport = false; addView(controls) }
+        val centerWorkspace = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        centerWorkspace.addView(previewFrame, LinearLayout.LayoutParams(-1, 0, 1f))
+        centerWorkspace.addView(controlsScroll, LinearLayout.LayoutParams(-1, dp(156)))
+        body.addView(centerWorkspace)
+        var placeCaptureActions: ((Boolean) -> Unit) = {}
+        fun adaptWorkspace() {
+            if (body.width <= 0 || root.height <= 0) return
+            val density = resources.displayMetrics.density
+            val mode = CameraWorkspaceLayout.choose(
+                (body.width / density).toInt(), (root.height / density).toInt(), resources.configuration.fontScale
+            )
+            if (mode == workspaceMode) return
+            workspaceMode = mode
+            if (mode == CameraWorkspaceLayout.Mode.SPLIT) {
+                header.orientation = LinearLayout.HORIZONTAL
+                titleRow.layoutParams = LinearLayout.LayoutParams(0, -2, .42f)
+                navigation.layoutParams = LinearLayout.LayoutParams(0, -2, .58f)
+                connectionStatus.visibility = View.GONE
+                placeCaptureActions(true)
+                body.orientation = LinearLayout.HORIZONTAL
+                statusRail.visibility = View.VISIBLE
+                body.removeAllViews()
+                body.addView(statusRail, LinearLayout.LayoutParams(dp(154), -1))
+                body.addView(centerWorkspace, LinearLayout.LayoutParams(0, -1, 1f))
+                centerWorkspace.orientation = LinearLayout.VERTICAL
+                previewFrame.layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+                controlsScroll.layoutParams = LinearLayout.LayoutParams(-1, dp(82))
+                controls.orientation = LinearLayout.VERTICAL
+                cameraPanel.orientation = LinearLayout.VERTICAL
+                cameraPanel.setCompactQuickControls(true)
+                connectionPrompt.visibility = View.GONE
+                previewPlaceholder.text = "Preview unavailable · pair a PC to start"
+            } else {
+                header.orientation = LinearLayout.VERTICAL
+                titleRow.layoutParams = LinearLayout.LayoutParams(-1, -2)
+                navigation.layoutParams = LinearLayout.LayoutParams(-1, -2)
+                connectionStatus.visibility = View.VISIBLE
+                placeCaptureActions(false)
+                body.orientation = LinearLayout.VERTICAL
+                statusRail.visibility = View.GONE
+                body.removeAllViews()
+                body.addView(centerWorkspace, LinearLayout.LayoutParams(-1, -1))
+                previewFrame.layoutParams = LinearLayout.LayoutParams(-1, 0, if (mode == CameraWorkspaceLayout.Mode.COMPACT) .58f else .64f)
+                controlsScroll.layoutParams = LinearLayout.LayoutParams(-1, 0, if (mode == CameraWorkspaceLayout.Mode.COMPACT) .42f else .36f)
+                controlsScroll.isFillViewport = true
+                cameraPanel.setCompactQuickControls(true)
+                previewPlaceholder.text = "Start camera to preview"
+                connectionPrompt.visibility = if (trustedDesktops.isEmpty() && service?.stats()?.state !in listOf("Starting", "Binding", "Capturing", "Recovering")) View.VISIBLE else View.GONE
+            }
+            body.requestLayout()
         }
+        body.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> adaptWorkspace() }
         val cameraPage = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         cameraPage.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -347,13 +405,77 @@ class MainActivity : Activity() {
         actions.addView(startButton, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
         actions.addView(retryConnection, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
         actions.addView(stopButton, LinearLayout.LayoutParams(0,-2,1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }); cameraPage.addView(actions)
+        placeCaptureActions = { inRail ->
+            val captureActions = listOf(startButton, retryConnection, stopButton)
+            if (inRail) {
+                for (button in captureActions) {
+                    (button.parent as? android.view.ViewGroup)?.removeView(button)
+                    statusRail.addView(button, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+                }
+                actions.visibility = View.GONE
+            } else {
+                for (button in captureActions) {
+                    (button.parent as? android.view.ViewGroup)?.removeView(button)
+                    actions.addView(button, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+                }
+                actions.visibility = View.VISIBLE
+            }
+        }
         val pages = FrameLayout(this)
         val connectionsPage = ScrollView(this).apply { addView(connections); visibility = View.GONE }
         val settingsPage = ScrollView(this).apply { addView(layout); visibility = View.GONE }
+        var selectCameraPage: () -> Unit = {}
+        var openCameraControls: () -> Unit = {}
+        fun openPresets() {
+            val names = CameraSettings(this).presets().keys.toTypedArray()
+            if (names.isEmpty()) { showNotice("No saved presets"); return }
+            android.app.AlertDialog.Builder(this).setTitle("Camera presets").setItems(names) { _, index ->
+                android.app.AlertDialog.Builder(this).setTitle(names[index])
+                    .setPositiveButton("Load") { _, _ -> service?.applyPreset(names[index]) }
+                    .setNeutralButton("Delete") { _, _ -> CameraSettings(this).deletePreset(names[index]); showNotice("Preset deleted") }
+                    .setNegativeButton("Cancel", null).show()
+            }.show()
+        }
+        fun showSettingsCategory(index: Int) {
+            selectedSettingsCategory = index
+            categoryIndex.visibility = View.GONE
+            categoryDetail.visibility = View.VISIBLE
+            categoryDetail.removeAllViews()
+            val category = PreferenceRows.categories[index]
+            val title = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+            title.addView(Button(this).apply { text = "‹"; contentDescription = "Back to settings"; MobileUi.button(this); setOnClickListener {
+                categoryDetail.visibility = View.GONE; categoryIndex.visibility = View.VISIBLE; selectedSettingsCategory = -1
+            } })
+            title.addView(TextView(this).apply { text = category.title; MobileUi.text(this, 22f) })
+            categoryDetail.addView(title)
+            when (category.title) {
+                "Video" -> categoryDetail.addView(PreferenceRows.row(this, "Video mode", "${selectedMode.label} · supported output resolution and frame rate", onClick = { selectCameraPage(); modeChoice.performClick() }))
+                "Camera" -> {
+                    categoryDetail.addView(PreferenceRows.row(this, "Optical camera", "Choose a camera supported by this device", onClick = { lensChoice.performClick() }))
+                    categoryDetail.addView(PreferenceRows.row(this, "Advanced camera controls", "Focus, exposure, white balance, image and preview aids", onClick = openCameraControls))
+                    categoryDetail.addView(PreferenceRows.row(this, "Camera presets", "Apply or delete a saved camera preset", onClick = ::openPresets))
+                }
+                "Security" -> {
+                    categoryDetail.addView(TextView(this).apply { text = "Pairing and trusted PCs are managed in Connections."; MobileUi.text(this, 15f, muted = true) })
+                    categoryDetail.addView(settings)
+                    categoryDetail.addView(resumeKeyChange)
+                }
+                "Diagnostics" -> {
+                    categoryDetail.addView(TextView(this).apply { text = "Live service, camera, encoder and transport diagnostics."; MobileUi.text(this, 15f, muted = true) })
+                    categoryDetail.addView(diagnosticsSettings)
+                }
+            }
+        }
+        PreferenceRows.categories.forEachIndexed { index, category ->
+            categoryIndex.addView(PreferenceRows.row(this, category.title, categoryIcon = category.title, onClick = { showSettingsCategory(index) }))
+            val divider = View(this).apply { setBackgroundColor(MobileUi.BORDER) }
+            categoryIndex.addView(divider, LinearLayout.LayoutParams(-1, dp(1)))
+        }
         pages.addView(cameraPage)
         pages.addView(connectionsPage)
         pages.addView(settingsPage)
         fun selectPage(page: Int) {
+            selectedPage = page
             cameraPage.visibility = if (page == 0) View.VISIBLE else View.GONE
             connectionsPage.visibility = if (page == 1) View.VISIBLE else View.GONE
             settingsPage.visibility = if (page == 2) View.VISIBLE else View.GONE
@@ -361,8 +483,14 @@ class MainActivity : Activity() {
                 MobileUi.button(view, selected = index == page)
             }
         }
+        selectCameraPage = {
+            selectedSettingsCategory = -1
+            categoryDetail.visibility = View.GONE
+            categoryIndex.visibility = View.VISIBLE
+            selectPage(0)
+        }
         fun updatePresentation() {
-            proToggle.text = if (proMode) "Pro" else "Simple"
+            proToggle.text = if (proMode) "Advanced" else "Simple"
             MobileUi.button(proToggle, selected = proMode)
             drawerTabs.visibility = if (proMode) View.VISIBLE else View.GONE
             if (!proMode) drawer.visibility = View.GONE
@@ -373,10 +501,20 @@ class MainActivity : Activity() {
             proPreference.edit().putBoolean("pro_mode", proMode).apply()
             updatePresentation()
         }
+        openCameraControls = {
+            if (!proMode) proToggle.performClick()
+            selectCameraPage()
+            if (drawer.visibility != View.VISIBLE || drawer.getChildAt(0) !== cameraPanel.advancedView)
+                drawerTabs.getChildAt(0)?.performClick()
+        }
         cameraNav.setOnClickListener { selectPage(0) }
         connectionsNav.setOnClickListener { selectPage(1) }
         settingsNav.setOnClickListener { selectPage(2) }
         updatePresentation(); selectPage(0)
+        if (savedInstanceState != null) {
+            selectPage(savedInstanceState.getInt("mobile.selectedPage", 0).coerceIn(0, 2))
+            savedInstanceState.getInt("mobile.settingsCategory", -1).takeIf { it in PreferenceRows.categories.indices }?.let(::showSettingsCategory)
+        }
         root.addView(pages, LinearLayout.LayoutParams(-1,0,1f))
         setContentView(root)
         root.requestApplyInsets()
@@ -405,6 +543,12 @@ class MainActivity : Activity() {
             .putExtra(CaptureService.EXTRA_CAMERA, CameraSettings(this).preferredCamera)
             .putExtra(CaptureService.EXTRA_PEER, trustedDesktops.getOrNull(desktops.selectedItemPosition)?.id)
         ContextCompat.startForegroundService(this, intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt("mobile.selectedPage", selectedPage)
+        outState.putInt("mobile.settingsCategory", selectedSettingsCategory)
+        super.onSaveInstanceState(outState)
     }
     private fun openRotation(role: String) {
         if (service?.stats()?.state?.let { it != "Stopped" } == true) {
@@ -484,7 +628,20 @@ class MainActivity : Activity() {
             previewPlaceholder.text = if (value.state == "Stopped") "Start camera to preview" else value.state
         }
         val canonical = service?.cameraStatus ?: CameraStatus()
-        val active = value.state in listOf("Starting", "Binding", "Capturing")
+        val active = value.state in listOf("Starting", "Binding", "Capturing", "Recovering")
+        if (::consoleDetails.isInitialized) {
+            consoleDetails.text = buildString {
+                append("${value.state}\n")
+                append("PC: ${trustedDesktops.getOrNull(desktops.selectedItemPosition)?.name ?: "Not paired"}\n")
+                val mode = value.effectiveMode.ifEmpty { selectedMode.label }
+                append("Video: $mode\n")
+                if (value.resolution.isNotEmpty()) append("Output: ${value.resolution}\n")
+                if (value.codec.isNotEmpty()) append("Encoder: ${value.codec}\n")
+                if (value.fps > 0f) append("${String.format(Locale.US, "%.1f", value.fps)} FPS\n")
+                append("Network: ${value.network.state}")
+                if (value.error.isNotEmpty()) append("\n${value.error}")
+            }
+        }
         if (active && canonical.mode.isNotEmpty()) selectedMode = CaptureService.Mode.entries.find { it.label == value.requestedMode }
             ?: CaptureService.Mode.fromName(canonical.mode)
         focusBadge.visibility = if (value.state == "Capturing") View.VISIBLE else View.GONE
@@ -501,7 +658,10 @@ class MainActivity : Activity() {
             stopButton.isEnabled = active
             startButton.visibility = if (active) View.GONE else View.VISIBLE
             stopButton.visibility = if (active) View.VISIBLE else View.GONE
-            connectionPrompt.visibility = if (trustedDesktops.isEmpty() && !active) View.VISIBLE else View.GONE
+            connectionPrompt.visibility = if (workspaceMode != CameraWorkspaceLayout.Mode.SPLIT && trustedDesktops.isEmpty() && !active) View.VISIBLE else View.GONE
+            if (workspaceMode == CameraWorkspaceLayout.Mode.SPLIT && !active && trustedDesktops.isEmpty())
+                previewPlaceholder.text = "Preview unavailable · pair a PC to start"
+            else if (!active) previewPlaceholder.text = "Start camera to preview"
         }
         service?.displayRotation(when (windowManager.defaultDisplay.rotation) { android.view.Surface.ROTATION_90 -> 90; android.view.Surface.ROTATION_180 -> 180; android.view.Surface.ROTATION_270 -> 270; else -> 0 })
         desktops.isEnabled = !active

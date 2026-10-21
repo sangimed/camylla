@@ -31,6 +31,9 @@ class CameraProductTest {
             if (view is android.widget.Button) listOf(view)
             else if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { buttons(view.getChildAt(it)) }
             else emptyList()
+        fun views(view: android.view.View): List<android.view.View> =
+            listOf(view) + if (view is android.view.ViewGroup)
+                (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
         try {
             instrumentation.runOnMainSync {
                 fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
@@ -40,9 +43,10 @@ class CameraProductTest {
                 assertTrue("Custom button should retain Android press feedback", cameraTab.background is android.graphics.drawable.RippleDrawable)
                 val navParams = cameraTab.layoutParams as android.widget.LinearLayout.LayoutParams
                 assertTrue("Navigation controls should have visible separation", navParams.leftMargin >= MobileUi.dp(activity, 4) && navParams.rightMargin >= MobileUi.dp(activity, 4))
-                assertTrue("First-run pairing action should appear on Camera", button("Connect a PC").isShown)
+                assertTrue("First-run pairing action should remain reachable from Camera", buttons(activity.findViewById(android.R.id.content))
+                    .any { it.text.toString() in setOf("Connect a PC", "Pair a PC") && it.isShown })
                 button("Simple").performClick()
-                val advanced = button("Pro controls")
+                val advanced = button("Advanced controls")
                 advanced.performClick()
                 val preset = button("Save preset")
                 assertTrue(preset.isShown)
@@ -56,13 +60,53 @@ class CameraProductTest {
                 val preset = button("Save preset")
                 button("Connections").performClick()
                 assertFalse("Camera pairing card should leave the Connections page", button("Connect a PC").isShown)
-                val scan = button("Connect a PC · Scan QR")
-                assertTrue(scan.isShown)
+                val pair = buttons(activity.findViewById(android.R.id.content))
+                    .single { it.text.toString() == "Pair a PC" && it.isShown }
+                assertTrue("Pairing must remain reachable from Connections", pair.isShown)
                 assertTrue("Selected navigation state did not follow page", button("Connections").isSelected)
                 assertFalse("Previous navigation state remained selected", button("Camera").isSelected)
                 assertFalse(preset.isShown)
                 button("Camera").performClick()
-                assertFalse(scan.isShown)
+                assertFalse(pair.isShown)
+
+                button("Settings").performClick()
+                fun preference(title: String): android.view.View = views(activity.findViewById(android.R.id.content))
+                    .filterIsInstance<android.widget.LinearLayout>()
+                    .single { row -> views(row).filterIsInstance<android.widget.TextView>().any { it.text.toString() == title } && row.isClickable }
+                assertFalse("Unsupported Power and Screen page must not be advertised", views(activity.findViewById(android.R.id.content))
+                    .filterIsInstance<android.widget.TextView>().any { it.text.toString() == "Power and Screen" })
+                preference("Video").performClick()
+                preference("Video mode").performClick()
+                assertTrue("Video chooser should return to the Camera destination", button("Camera").isSelected)
+            }
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            instrumentation.runOnMainSync {
+                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
+                    .single { it.text.toString().equals(text, ignoreCase = true) }
+                fun preference(title: String): android.view.View = views(activity.findViewById(android.R.id.content))
+                    .filterIsInstance<android.widget.LinearLayout>()
+                    .single { row -> views(row).filterIsInstance<android.widget.TextView>().any { it.text.toString() == title } && row.isClickable }
+                button("Settings").performClick()
+                preference("Camera").performClick()
+                preference("Advanced camera controls").performClick()
+                assertTrue("Advanced category must expose real preset and camera controls", button("Save preset").isShown)
+                button("Settings").performClick()
+                button("Camera").performClick()
+                assertTrue("Advanced controls should remain attached to the Camera drawer", button("Save preset").isShown)
+            }
+            instrumentation.runOnMainSync {
+                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
+                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
+                    .single { it.text.toString().equals(text, ignoreCase = true) }
+                assertTrue("Landscape should expose the camera status rail", views(activity.findViewById(android.R.id.content))
+                    .filterIsInstance<android.widget.TextView>().any { it.text.toString() == "CONNECTION / VIDEO" && it.isShown })
+                assertTrue("Landscape capture action must remain reachable", button("Start camera").isShown)
+            }
+            instrumentation.runOnMainSync {
+                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
             instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync {

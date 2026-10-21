@@ -30,6 +30,7 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
     private val handler = Handler(Looper.getMainLooper())
     private val scheduled = mutableMapOf<String, Runnable>()
     private var simpleMode = true
+    private var compactQuickControls = false
     private var latestStatus = CameraStatus()
     init {
         orientation = VERTICAL; addView(state)
@@ -50,6 +51,18 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
         simpleMode = value
         generation = -1
         update(latestStatus)
+    }
+    /** Keep frequent actions in a single compact rail on the camera workspace. */
+    fun setCompactQuickControls(value: Boolean) {
+        compactQuickControls = value
+        quick.orientation = if (value) HORIZONTAL else VERTICAL
+        for (index in 0 until quick.childCount) {
+            val child = quick.getChildAt(index)
+            val params = child.layoutParams as LayoutParams
+            params.width = if (value) 0 else LayoutParams.MATCH_PARENT
+            params.weight = if (value) 1f else 0f
+            child.layoutParams = params
+        }
     }
     fun update(status: CameraStatus) {
         latestStatus = status
@@ -131,6 +144,7 @@ internal class CameraControlsPanel(context: Context, private val service: () -> 
                 }.show()
             } }, spaced())
         }
+        setCompactQuickControls(compactQuickControls)
         val availability = mutableListOf<String>()
         for ((key, button) in quickButtons) {
             val presentation = CameraQuickControls.present(key, status)

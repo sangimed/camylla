@@ -5,6 +5,11 @@ import org.junit.Test
 
 class DesignSystemTest {
     @Test
+    fun `settings categories include only supported destinations`() {
+        assertEquals(listOf("Video", "Camera", "Security", "Diagnostics"), PreferenceRows.categories.map { it.title })
+    }
+
+    @Test
     fun `mobile palette matches Camylla dark workspace tokens`() {
         assertEquals(0xFF18181B.toInt(), MobileUi.BACKGROUND)
         assertEquals(0xFF222225.toInt(), MobileUi.SURFACE)
