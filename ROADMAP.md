@@ -57,7 +57,7 @@ The M1 evidence is recorded in [`docs/validation/windows-virtual-camera-m1.md`](
 - [x] Manually validate app switching, foreground-service lifecycle, and screen-off behavior.
 - [x] Measure about 29.9 encoded FPS at rear 720p30 on the primary physical phone.
 - [ ] Record additional thermal and battery measurements through focused checks: [#46](https://github.com/sangimed/camylla/issues/46).
-- [ ] Record optional 60 FPS results and 30 FPS fallback, without making them a release blocker: [#47](https://github.com/sangimed/camylla/issues/47).
+- [ ] Validate optional 60 FPS capability and 30 FPS fallback on physical hardware, including unique delivered FPS and OBS negotiation where supported. Capability-gated implementation merged in [PR #81](https://github.com/sangimed/camylla/pull/81); physical capability and OBS results remain unverified in the [validation record](docs/validation/issue-78-1080p60.md). Track this optional validation in [#47](https://github.com/sangimed/camylla/issues/47); it is not a release blocker.
 
 The physical evidence and limits of this feasibility result are preserved in [the S21 Ultra validation record](docs/validation/android-m2-s21-ultra.md). Tracking: [#13 — M2: validate Android CameraX to MediaCodec H.264 capture](https://github.com/sangimed/camylla/issues/13).
 
