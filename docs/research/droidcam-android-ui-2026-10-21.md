@@ -13,6 +13,9 @@ more directly than the current listing metadata.
 - [Official DroidCam OBS product page](https://droidcam.app/obs/)
 - [Official OBS usage guide](https://www.droidcam.app/obs/usage/)
 - [Official help and FAQ](https://droidcam.app/help/)
+- [Official Pro/features page](https://droidcam.app/pro-info.html), for capability naming
+- [Public DroidCam OBS setup walkthrough](https://www.youtube.com/watch?v=oAE-P1zmrUA), published about a year before this review; it is secondary and mainly demonstrates setup, not the supplied current phone UI
+- [Official product-page promotional images](https://files.dev47apps.net/img/droidcam_obs_plugin_list.png) and [OBS source-properties image](https://files.dev47apps.net/img/droidcam_obs_props.png); these depict desktop/OBS surfaces, so they do not inform Android layout
 - Five user-provided screenshots, captured 2026-10-21: active camera console;
   Settings categories; Video settings; Camera settings; Power and Screen settings.
 
@@ -20,6 +23,11 @@ The listing and vendor guides describe connection and capability constraints.
 The screenshots are direct evidence for visible layout and labels only. They do
 not establish gestures, defaults, persistence, accessibility behavior, or the
 effects of tapping individual controls.
+
+The Play listing advertises exposure, white-balance, and focus features; the
+official Pro page documents basic on-phone controls (zoom, EV, AWB) and optional
+remote controls. Those pages support feature terminology only. Pro gating and
+remote controls are not Camylla requirements and are not copied.
 
 ## Screen findings and screenshot mapping
 
