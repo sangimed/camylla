@@ -1,37 +1,94 @@
-# Android mobile UI redesign
+# Android camera-first UI design
 
-Status: implementation design for [#59](https://github.com/sangimed/camylla/issues/59).
+Status: implementation specification for [#59](https://github.com/sangimed/camylla/issues/59).
+Reference findings are recorded in [DroidCam Android UI research](research/droidcam-android-ui-2026-10-21.md).
 
-## Evidence and intent
+## Product intent
 
-The existing product already has a working preview, explicit phone-authorized Start,
-pairing, synchronized camera controls, presets and security-key rotation. The redesign
-must preserve those behaviours while making the streaming path legible at a glance.
+Give Camylla a camera-first experience that feels familiar to users of the current
+DroidCam OBS Android app: a large live image, dense camera-context controls, clear
+connection/output information, and direct access to grouped settings. The supplied
+screenshots determine the reference layout. Camylla retains its own identity and
+original icons. The existing Camera, Connections, and Settings destinations remain.
 
-The interaction model takes inspiration from the *principles* documented by
-[Blackmagic Camera](https://www.blackmagicdesign.com/products/blackmagiccamera):
-important capture parameters are available from the camera view, tap-to-focus remains
-direct, and detailed controls do not obscure the shot. Camylla uses original styling,
-layout and vector symbols; it does not copy Blackmagic assets or screens. Material
-accessibility guidance informs text labels, contrast, touch targets and responsive
-reflow.
+## Camera workspace
 
-## Product decisions
+- Keep the active preview as the largest element. Landscape uses a preview-led
+  console with compact connection/output details at the leading edge, selectors and
+  high-use controls near the preview, and the capture action at a fixed reachable
+  edge. Do not cover the center of the image with decorative panels.
+- Portrait stacks the preview over a compact, horizontally scrollable quick-control
+  strip. Connection details can collapse; Start/Stop stays visible without scrolling.
+- Use available width and height, not orientation alone, to choose stacked, split, or
+  compact layouts. On tablets, extra width expands the preview before control rails.
+  Scroll low-priority controls at short heights and large font scales.
+- Keep Camera, Connections, Settings navigation compact in the camera context; use
+  preference-style full-width rows and a category index for settings.
+- Camera/lens, video mode, zoom, focus, autofocus/lock, torch, exposure, white balance,
+  image, orientation/mirroring, preview aids, and presets remain capability-aware.
+  Frequent actions stay on Camera; specialist controls are grouped under Camera
+  controls or the relevant settings category.
 
-| Decision | Design response |
-| --- | --- |
-| Avoid overwhelming a new user | **Simple** is the default, persisted separately from capture settings. It shows preview, PC state, Start/Stop, camera, video quality, zoom and torch. |
-| Retain professional control | An explicit, persisted **Pro** mode reveals the current focus, exposure, white-balance, image, and monitoring groups plus presets. Switching presentation mode never interrupts capture. |
-| Keep streaming immediate | Camera is a dedicated home screen. A large Start/Stop action is always reachable; the preview keeps touch-focus and pinch-zoom. |
-| Separate infrequent work | Connections owns one-time code/QR pairing and trusted PCs. Settings & security owns key rotation, recovery and diagnostics. |
-| Work across available space | Portrait stacks preview and controls; landscape and wide tablets place controls beside the preview. Pages scroll at larger font scales rather than overlap. |
-| Communicate state quietly | Anthracite surfaces, electric-blue action/focus accents, green connected state, and red only for stop or critical failure. Short inline feedback replaces routine modal interruption. |
-| Preserve accessibility | Text accompanies Simple-mode icons; controls are at least 48 dp high, descriptive, high-contrast, and retain all existing keyboard/screen-reader labels. |
+## State and lifecycle
 
-## Validation record to complete
+The visible capture action is a single stateful action: **Start** while stopped and
+ready, **Stop** while starting, binding, capturing, or recovering. Pairing trust is
+not a live session. Starting, streaming, recovery, stopped, and error states come
+from the existing service and transport state, with words/icons as well as color.
+Only observed camera values are presented as applied; pending and unavailable states
+retain their explanation.
 
-Before #59 can be accepted, record build/device details and captures of Simple and Pro
-on a real device in portrait, landscape, tablet/wide layout and enlarged font scale.
-Then run the focused OBS start, stream, stop and recovery checks and obtain the
-user's visual acceptance. These are release-consumer checks for OBS, not a timed
-endurance run.
+Activity recreation for rotation rebuilds the presentation against current available
+bounds and reattaches the preview to the existing foreground service. It must not
+start another camera, encoder, transport, or authorized session. Pairing, security,
+camera lifecycle, authentication, and Windows protocol behavior stay behind their
+existing contracts.
+
+## Visual system and components
+
+Retain Camylla's `MobileUi` palette and semantic meanings: anthracite backgrounds,
+flat dark surfaces, fine separators, white primary text, muted support text, blue
+actions/focus, green healthy state, amber recovery, and red Stop/critical errors.
+Use the native system font and scalable `sp`, 4dp-based spacing, 48dp minimum hit
+targets, original vector symbols, and restrained corner radii. Avoid dashboard cards,
+decorative gradients, copied third-party assets, and unlabeled essential actions.
+
+Settings use DroidCam's category and preference-row organization: icon/title, current
+value or subtitle, trailing switch/chevron, and thin dividers. Map only existing
+Camylla capabilities; omit Audio, Remote Control, Pro commerce, and unsupported
+Camera2 options. Pairing/security stays in Connections and Settings as already
+implemented. No row is a placeholder.
+
+Control rows show label, input, camera-confirmed value, unit, pending state, and
+device-provided unavailable reason. Choice dialogs, sliders and toggles preserve
+existing callbacks and descriptor validation. Start/Stop and pairing/destructive
+actions keep visible text.
+
+## Existing capability mapping
+
+| Current Camylla behavior | Redesigned location |
+|---|---|
+| `SurfaceView` preview and focus markers | Dominant Camera workspace; preserve safe inset and aspect behavior |
+| Camera/lens and video mode | Compact selectors next to the preview |
+| Zoom, torch, focus centre/autofocus/lock | Camera quick controls |
+| Focus distance, exposure/light, white balance, image, orientation, mirroring, preview aids | Grouped Camera controls/settings, based on camera descriptors |
+| Preset save/apply/delete and reset | Advanced Camera controls |
+| Pairing code/QR, trusted desktop, forget/revoke | Connections, preserving existing confirmation/security flows |
+| Key rotation, recovery and diagnostics | Settings, in clear Security and Diagnostics groups |
+| Explicit phone-authorized capture | One prominent Start/Stop action |
+
+## Acceptance
+
+- Landscape active camera is visibly preview-dominant with connection/output context
+  and compact reachable camera controls.
+- Portrait, narrow landscape, tablet/wide window, and increased font scale reflow
+  without overlap or hidden Start/Stop.
+- Paired-ready, starting, streaming, recovering, disconnected and error are never
+  conflated; capture never starts from navigation, pairing, settings, or rotation.
+- Existing capabilities and feedback remain functional; unsupported values are not
+  simulated.
+- Repeated rotation preserves the active service session and returns the preview.
+- Settings use category and flat preference rows without removing security, pairing,
+  diagnostic, preset, or advanced camera functions.
+- Runtime visual evidence is captured only with explicit user authorization. OBS is
+  the release consumer for focused streaming checks; no timed endurance requirement.
