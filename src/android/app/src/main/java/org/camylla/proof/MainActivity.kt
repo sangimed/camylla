@@ -453,11 +453,12 @@ class MainActivity : Activity() {
             selectedSettingsCategory = index
             categoryIndex.visibility = View.GONE
             categoryDetail.visibility = View.VISIBLE
+            settingsBack.visibility = View.GONE
             categoryDetail.removeAllViews()
             val category = PreferenceRows.categories[index]
             val title = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
             title.addView(Button(this).apply { text = "‹"; contentDescription = "Back to settings"; MobileUi.button(this); setOnClickListener {
-                categoryDetail.visibility = View.GONE; categoryIndex.visibility = View.VISIBLE; selectedSettingsCategory = -1
+                categoryDetail.visibility = View.GONE; categoryIndex.visibility = View.VISIBLE; settingsBack.visibility = View.VISIBLE; selectedSettingsCategory = -1
             } })
             title.addView(TextView(this).apply { text = category.title; MobileUi.text(this, 22f) })
             categoryDetail.addView(title)
@@ -506,6 +507,7 @@ class MainActivity : Activity() {
             selectedSettingsCategory = -1
             categoryDetail.visibility = View.GONE
             categoryIndex.visibility = View.VISIBLE
+            settingsBack.visibility = View.VISIBLE
             selectPage(0)
         }
         returnToCamera = selectCameraPage
@@ -688,6 +690,8 @@ class MainActivity : Activity() {
             modeChoice.contentDescription = "Video mode: ${if (active) value.requestedMode else selectedMode.label}"
             modeChoice.isEnabled = currentCamera != null && value.state !in listOf("Starting", "Binding")
             startButton.isEnabled = !active && trustedDesktops.isNotEmpty()
+            startButton.alpha = if (startButton.isEnabled) 1f else 0.48f
+            startButton.contentDescription = if (startButton.isEnabled) "Start camera" else "Start camera unavailable. Pair a PC first."
             stopButton.isEnabled = active
             startButton.visibility = if (active) View.GONE else View.VISIBLE
             stopButton.visibility = if (active) View.VISIBLE else View.GONE

@@ -85,23 +85,45 @@ no connected test was directed to the Xiaomi.
 ### Xiaomi physical device
 
 - Device: Xiaomi `2405CPCFBG`, serial `d3ec6d70`, Android 16/API 36, display
-  1600×2560 at 320dpi.
-- `am get-current-user` reports user 0. Security Space user 10 exists and is
-  running. The user explicitly requested that the agent not switch spaces.
-- An initial alpha.7 candidate installed in user 10 after the user enabled
-  Xiaomi's Install via USB permission. The final APK (SHA-256 above) update
-  failed with `INSTALL_FAILED_USER_RESTRICTED`. Pulling the installed APK from
-  `pm path --user 10` confirmed it still matches the earlier candidate
-  (`26f565a0907cfbc04bd8a349730833b5740ed554f60324474952d122205503b9`), not
-  the final APK. User 0 remains uninstalled.
-- `am start --user 10 -n org.camylla.proof/.MainActivity` returned “Starting”,
-  but no Camylla process or resumed Activity appeared; MIUI's USB-install
-  settings activity remained foreground. No user-switch command was issued.
-- Camera and notification runtime permissions are not granted in user 10.
-- Physical portrait/landscape UI, settings navigation, pairing, camera,
-  Start/Stop, active rotation/recovery, and OBS stream: **NOT TESTED**. The user
-  authorized local device screenshots, but no Camylla screenshot was captured
-  because the final APK was not running visibly on the phone.
+  1600×2560 at 320dpi. The tablet was in landscape when connected; a temporary
+  display-rotation lock was used to inspect portrait and then released. The
+  original accelerometer-rotation setting was 1 and remains 1.
+- After the user enabled Xiaomi's Install via USB gate, updating the exact final
+  APK into Security Space succeeded with `adb install --user 10 -r`. The APK
+  identity is package `org.camylla.proof`, versionCode 7, versionName
+  `0.6.0-alpha.7-debug`, launcher `org.camylla.proof/.MainActivity`; the local
+  artifact SHA-256 is listed above. The package path resolves under user 10.
+- With the user's explicit authorization, ADB switched to user 10. The
+  top-resumed Activity became `u10 org.camylla.proof/.MainActivity`, with a live
+  Camylla process (PID 22632). This completes the source → APK → installed
+  package → running Activity → visible UI chain. No screenshot was uploaded or
+  committed; authorized local captures were deleted after inspection.
+- Physical UI: **PASS**. In landscape, the preview is the dominant surface with
+  connection/Start controls in a left rail and quick camera controls below. In
+  portrait, the preview remains the largest region, camera/video selectors sit
+  above, quick controls below, and explicit Start spans the bottom. Both
+  orientations show truthful not-paired/stopped/disconnected state. Settings
+  navigation and Camera category pages were opened and inspected in both
+  orientations; optical camera, advanced controls, and presets are discoverable.
+- The device reported “PC: Not paired” / “Not paired · Stopped” and “Network:
+  Disconnected”. Camera and notification runtime permissions are not granted in
+  user 10. No camera imagery was captured, and Start was not activated because
+  it would require granting camera access. Pairing, live capture/Start/Stop,
+  hardware controls, active rotation/recovery, and OBS streaming remain
+  **NOT TESTED** on this device.
+- The physical screenshots above are from the installed `6643e1ea...` build
+  before the finish-gate corrections below. Source was then corrected to
+  visibly dim disabled Start and remove the parent Settings back bar while in
+  category detail. The corrected APK was built with explicit alpha.7 identity;
+  its SHA-256 is
+  `bf65b542e36243e52522b4c23cfeb19f629a91f2f91ba012d582b7983b0515ed`. The
+  update was canceled by MIUI with
+  `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`; therefore these
+  corrections have **not** yet been reinstalled or visually verified on the
+  physical device. The device continues running the previous installed build.
+- Authorized local screenshots were inspected by the independent reviewers and
+  are not in the repository. The shell policy rejected temporary-file cleanup,
+  so they remain in the local Windows Temp folder pending cleanup.
 
 ## Before / after evidence boundary
 
@@ -110,24 +132,32 @@ dashboard header, identical vertical composition in both Xiaomi orientations,
 and blank stopped preview. The current source substantially restructures the
 camera destination and orientation policy. The one passing API 35 UI test
 confirms the new workspace mounts and exposes its main controls. It does not
-prove a visual comparison on the physical device. No pixel-fidelity or
-physical-acceptance claim is made.
+prove the physical screen by itself; the Xiaomi screenshots now confirm that
+the redesigned Activity is visibly running in both orientations. In portrait,
+the stopped viewport displays “Start camera to preview”; in landscape the
+unpaired state explains that pairing is needed. DroidCam's supplied active
+landscape view still differs because Camylla has no paired PC or live camera
+image in this validation session. No pixel-fidelity claim is made.
 
 ## Independent review
 
-- UI Finish Gate: **HOLD**. No source-level blocker was identified, but the
-  reviewer marked active/recovery visual evidence and constrained landscape /
-  larger-font geometry evidence as MAJOR gaps. Physical UI evidence is absent.
-- Reality Checker: APK installation into user 10 passed for the earlier
-  candidate; installation/update and visible launch of the final APK are not
-  verified. Pairing, camera, OBS, and rotation remain untested on the Xiaomi.
+- UI Finish Gate: **HOLD** after reviewing the physical captures. It confirmed
+  the layout in both orientations and found no blocker, but raised MAJOR
+  findings for enabled-looking disabled Start, duplicate Settings back
+  navigation, and missing active/recovery states. Source corrections for the
+  first two were built, but the updated APK could not be installed after MIUI
+  canceled the update. Active/recovery and larger-font geometry remain untested.
+- Reality Checker: physical launch and navigation passed for the previous
+  installed build. It independently confirmed the duplicate camera-detail
+  navigation issue. Pairing, camera, OBS, and streaming-rotation recovery remain
+  untested. The corrected APK update is not physically verified.
 - The corrected emulator rotation/navigation instrumentation has not completed
   due AVD storage. No final visual approval is claimed.
 
 ## Acceptance status
 
-**Implementation buildable; physical acceptance incomplete.** The user needs to
-allow updating the final APK in Security Space and bring that existing profile
-to the foreground for launch and authorized portrait/landscape inspection. No
-profile restriction was bypassed, no profile switch was issued, and the
-roadmap was not changed.
+**Implementation buildable; pre-correction physical portrait/landscape UI
+verified; final visual acceptance remains on HOLD.** The installed app visibly
+proved the redesigned composition, but the two MAJOR visual corrections in the
+new APK are not yet on-device. Runtime camera permission, pairing, live stream
+and OBS checks also remain outstanding. The roadmap was not changed.

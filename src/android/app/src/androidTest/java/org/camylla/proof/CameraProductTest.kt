@@ -61,8 +61,11 @@ class CameraProductTest {
                 assertFalse("Unsupported Power and Screen page must not be advertised", views(root)
                     .filterIsInstance<android.widget.TextView>().any { it.text.toString() == "Power and Screen" })
                 preference("Video").performClick()
-                assertTrue("Settings detail must expose an explicit back action", views(root).filterIsInstance<android.widget.Button>()
-                    .any { it.isShown && it.contentDescription == "Back to Camera" })
+                assertTrue("Settings detail must expose a single back-to-settings action", views(root).filterIsInstance<android.widget.Button>()
+                    .any { it.isShown && it.contentDescription == "Back to settings" })
+                assertFalse("Category detail must not show the parent Back to Camera action at the same time", views(root)
+                    .filterIsInstance<android.widget.Button>().any { it.isShown && it.contentDescription == "Back to Camera" })
+                button("Back to settings").performClick()
                 button("Back to Camera").performClick()
                 settings.performClick()
                 preference("Camera").performClick()
@@ -136,6 +139,12 @@ class CameraProductTest {
                 assertTrue("Compact status must identify the actual capture state", compactStatus.contentDescription.contains("Capture state:"))
                 assertEquals("Exactly one explicit capture action is visible while stopped", 1,
                     buttons.count { it.text.toString() == "Start camera" || it.text.toString() == "Stop camera" })
+                val start = buttons.single { it.text.toString() == "Start camera" }
+                if (compactStatus.text.toString().startsWith("Not paired")) {
+                    assertFalse("Start must be disabled until a PC is paired", start.isEnabled)
+                    assertTrue("Disabled Start must look visibly unavailable", start.alpha < 1f)
+                    assertTrue("Disabled Start must explain the pairing requirement", start.contentDescription.contains("Pair a PC first"))
+                }
                 val preview = views(root).filterIsInstance<android.view.SurfaceView>().single()
                 val bounds = android.graphics.Rect()
                 assertTrue("Preview viewport should be visible and usable", preview.getGlobalVisibleRect(bounds) && bounds.width() >= MobileUi.dp(activity, 180))
