@@ -94,3 +94,58 @@ and original vector icons rather than reproducing DroidCam marks or artwork.
 - Active rotation must preserve the service session and reattach the new preview
   surface, addressing issue #70.
 - No reference screenshot is included in distributed app assets.
+
+## Follow-up visual inspection — 2026-10-22
+
+The five original reference images were supplied locally for this task and
+inspected directly. They are not copied into the repository or application.
+
+1. **Active camera console (photo 1, landscape, 2048×1024):** the live image
+   fills almost the full screen height and most of its width. A narrow dark rail
+   at the left holds Wi-Fi/LAN, the device endpoint, video size, codec, AE FPS
+   range, and camera switch/AWB/EV/AF-C controls. Thin transparent top and bottom
+   rails sit over the image: crop/grid/framing aids, Settings, Dim, explicit
+   Stop, lens switch, exposure/focus mode, and zoom. Grid lines cross the image;
+   there is no opaque panel over its center. Camylla mapping: keep the preview
+   unobscured, place truthful peer/session/output facts in a compact edge rail,
+   group supported lens/focus/exposure/zoom actions together, and show one
+   stateful Start/Stop action. Omit Get Pro and avoid unverified raw IP/stat data.
+2. **Video settings (photo 2, portrait):** a large “Video” title is followed by
+   three flat rows with generous vertical spacing and thin rules. Each row puts
+   its name first and value/subtitle underneath; the Manual row has a trailing
+   checkbox and Encoder Options is visibly disabled. Camylla mapping: use this
+   hierarchy for supported resolution/FPS, effective/pending state, and any
+   existing advanced encoder controls; do not invent a quality preset.
+3. **Camera settings (photo 3, portrait):** a “Camera” detail page groups a
+   Camera2 toggle, locked remembered parameters, double-tap action, target and
+   minimum FPS, then an Advanced Options section and Camera2 probe row. Camylla
+   mapping: retain the grouped detail-page structure, but show only Camylla's
+   real camera catalog, supported modes, camera controls, presets, and
+   diagnostics. Do not imitate unsupported switches, locked fields, or probes.
+4. **Power and Screen settings (photo 4, portrait):** flat rows combine a title,
+   explanatory subtitle, and trailing checkbox or value. Section headings split
+   device-awake, battery, dim/lock-input, background streaming, and screen-off
+   behavior. Camylla mapping: expose only existing power/screen/session options;
+   explain foreground-service and notification requirements and keep unsupported
+   options absent.
+5. **Settings category index (photo 5, portrait):** a back/title bar precedes
+   full-width icon-led rows with large labels and thin separators: Video, Camera,
+   Audio, Power and Screen, Remote Control, Other, and Get Pro. The hierarchy is
+   a compact category index, not a card dashboard. Camylla mapping: retain its
+   Camera/Connections/Settings destinations; use a flat Settings category index
+   leading to titled detail pages. Include only categories with implemented
+   actions; omit Audio, Remote Control, and commerce.
+
+Only photo 1 shows the active camera screen; it does not establish the portrait
+camera composition. The portrait/landscape behavior beyond these displayed
+states is therefore a Camylla responsive design decision. The images show
+visible controls, not their tap behavior, persistence, defaults, or accessibility
+semantics. Those interactions remain grounded in vendor documentation and
+Camylla's existing implementation.
+
+The main geometry decision is now explicit: preview first, compact transparent
+edge controls over the image, a narrow connection/output rail where width permits,
+and preference-style flat settings rows. Keep a 48dp touch target and accessible
+labels even where the reference uses compact icon controls. Preserve Camylla's
+blue/green/amber/red status meaning and original vector assets; do not reproduce
+DroidCam branding or artwork.
