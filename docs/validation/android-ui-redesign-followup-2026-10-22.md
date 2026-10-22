@@ -9,6 +9,11 @@ camera/encoder/transport/pairing services, or the streaming protocol. Detailed
 cause analysis is in
 [`android-ui-redesign-diagnosis-2026-10-22.md`](android-ui-redesign-diagnosis-2026-10-22.md).
 
+- Android implementation commit: `4b22a59`.
+- Research and validation documentation commit: `148b86c`.
+- Draft PR: [#85](https://github.com/sangimed/camylla/pull/85), referencing
+  #59 and related to #79.
+
 ## Change summary
 
 The alpha6 camera page used a branded header, a dashboard-like Camera /
