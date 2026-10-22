@@ -11,6 +11,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,102 +26,121 @@ class CameraProductTest {
     @Test fun mobileNavigationKeepsCaptureActionsVisibleAndSeparatesInfrequentWork() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.targetContext.getSharedPreferences("mobile-ui", Context.MODE_PRIVATE).edit().clear().commit()
-        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java)
+        var activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
         instrumentation.waitForIdleSync()
-        fun buttons(view: android.view.View): List<android.widget.Button> =
-            if (view is android.widget.Button) listOf(view)
-            else if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { buttons(view.getChildAt(it)) }
-            else emptyList()
         fun views(view: android.view.View): List<android.view.View> =
             listOf(view) + if (view is android.view.ViewGroup)
                 (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
         try {
             instrumentation.runOnMainSync {
-                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
-                    .single { it.text.toString().equals(text, ignoreCase = true) }
-                val cameraTab = button("Camera")
-                assertTrue("Active page should be visibly selected", cameraTab.isSelected)
-                assertTrue("Custom button should retain Android press feedback", cameraTab.background is android.graphics.drawable.RippleDrawable)
-                val navParams = cameraTab.layoutParams as android.widget.LinearLayout.LayoutParams
-                assertTrue("Navigation controls should have visible separation", navParams.leftMargin >= MobileUi.dp(activity, 4) && navParams.rightMargin >= MobileUi.dp(activity, 4))
-                assertTrue("First-run pairing action should remain reachable from Camera", buttons(activity.findViewById(android.R.id.content))
-                    .any { it.text.toString() in setOf("Connect a PC", "Pair a PC") && it.isShown })
-                button("Simple").performClick()
-                val advanced = button("Advanced controls")
-                advanced.performClick()
-                val preset = button("Save preset")
-                assertTrue(preset.isShown)
-            }
-            instrumentation.waitForIdleSync()
-            instrumentation.runOnMainSync {
-                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
-                    .single { it.text.toString().equals(text, ignoreCase = true) }
-                assertTrue("Start action hidden by Pro controls", button("Start camera").getGlobalVisibleRect(android.graphics.Rect()))
-                assertFalse("Stop action should stay hidden while idle", button("Stop camera").isShown)
-                val preset = button("Save preset")
-                button("Connections").performClick()
-                assertFalse("Camera pairing card should leave the Connections page", button("Connect a PC").isShown)
-                val pair = buttons(activity.findViewById(android.R.id.content))
-                    .single { it.text.toString() == "Pair a PC" && it.isShown }
-                assertTrue("Pairing must remain reachable from Connections", pair.isShown)
-                assertTrue("Selected navigation state did not follow page", button("Connections").isSelected)
-                assertFalse("Previous navigation state remained selected", button("Camera").isSelected)
-                assertFalse(preset.isShown)
-                button("Camera").performClick()
-                assertFalse(pair.isShown)
-
-                button("Settings").performClick()
-                fun preference(title: String): android.view.View = views(activity.findViewById(android.R.id.content))
+                val root = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
+                fun button(description: String) = views(root).filterIsInstance<android.widget.Button>()
+                    .single { it.contentDescription?.toString()?.startsWith(description) == true && it.isShown }
+                val settings = button("Settings")
+                val connections = button("Connections")
+                val compactStatus = views(root).filterIsInstance<android.widget.TextView>()
+                    .single { it.contentDescription?.startsWith("Compact connection and capture status") == true }
+                assertTrue("Connection/capture state should remain visible on Camera", compactStatus.isShown)
+                val visibleCaptureState = compactStatus.text.toString().substringAfterLast(" · ")
+                assertTrue("Accessible status should expose the visible capture state",
+                    compactStatus.contentDescription.contains("Capture state: $visibleCaptureState."))
+                assertTrue("Camera toolbar actions should preserve touch feedback", settings.background is android.graphics.drawable.RippleDrawable)
+                assertTrue("Only one capture action should be exposed while stopped", views(root).filterIsInstance<android.widget.Button>()
+                    .count { it.isShown && it.text.toString() in setOf("Start camera", "Stop camera") } == 1)
+                connections.performClick()
+                assertTrue("Connections destination should expose pairing", views(root).filterIsInstance<android.widget.Button>()
+                    .any { it.isShown && it.text.toString() == "Pair a PC" })
+                assertTrue("Connections must provide a path back to Camera", views(root).filterIsInstance<android.widget.Button>()
+                    .any { it.isShown && it.contentDescription == "Back to Camera" })
+                button("Back to Camera").performClick()
+                settings.performClick()
+                fun preference(title: String): android.view.View = views(root)
                     .filterIsInstance<android.widget.LinearLayout>()
                     .single { row -> views(row).filterIsInstance<android.widget.TextView>().any { it.text.toString() == title } && row.isClickable }
-                assertFalse("Unsupported Power and Screen page must not be advertised", views(activity.findViewById(android.R.id.content))
+                assertFalse("Unsupported Power and Screen page must not be advertised", views(root)
                     .filterIsInstance<android.widget.TextView>().any { it.text.toString() == "Power and Screen" })
                 preference("Video").performClick()
-                preference("Video mode").performClick()
-                assertTrue("Video chooser should return to the Camera destination", button("Camera").isSelected)
-            }
-            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-            instrumentation.runOnMainSync {
-                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
-                    .single { it.text.toString().equals(text, ignoreCase = true) }
-                fun preference(title: String): android.view.View = views(activity.findViewById(android.R.id.content))
-                    .filterIsInstance<android.widget.LinearLayout>()
-                    .single { row -> views(row).filterIsInstance<android.widget.TextView>().any { it.text.toString() == title } && row.isClickable }
-                button("Settings").performClick()
+                assertTrue("Settings detail must expose an explicit back action", views(root).filterIsInstance<android.widget.Button>()
+                    .any { it.isShown && it.contentDescription == "Back to Camera" })
+                button("Back to Camera").performClick()
+                settings.performClick()
                 preference("Camera").performClick()
                 preference("Advanced camera controls").performClick()
-                assertTrue("Advanced category must expose real preset and camera controls", button("Save preset").isShown)
-                button("Settings").performClick()
-                button("Camera").performClick()
-                assertTrue("Advanced controls should remain attached to the Camera drawer", button("Save preset").isShown)
+                assertTrue("Advanced category must expose real camera controls", views(root).filterIsInstance<android.widget.Button>()
+                    .any { it.isShown && it.text.toString() == "Save preset" })
+                assertTrue("Opening advanced camera controls must return to Camera", compactStatus.isShown)
             }
             instrumentation.runOnMainSync {
                 activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             }
             instrumentation.waitForIdleSync()
+            activity = requireNotNull(resumedMainActivity(instrumentation)) { "Landscape MainActivity did not resume" }
             instrumentation.runOnMainSync {
-                fun button(text: String) = buttons(activity.findViewById(android.R.id.content))
+                fun button(text: String) = views(activity.findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>()
                     .single { it.text.toString().equals(text, ignoreCase = true) }
-                assertTrue("Landscape should expose the camera status rail", views(activity.findViewById(android.R.id.content))
-                    .filterIsInstance<android.widget.TextView>().any { it.text.toString() == "CONNECTION / VIDEO" && it.isShown })
+                val allViews = views(activity.findViewById(android.R.id.content))
+                val railVisible = allViews.filterIsInstance<android.widget.TextView>()
+                    .any { it.text.toString() == "CONNECTION / VIDEO" && it.isShown }
+                val compactStatus = allViews.filterIsInstance<android.widget.TextView>()
+                    .single { it.contentDescription?.startsWith("Compact connection and capture status") == true }
+                assertEquals("Connection status should appear in either the landscape rail or compact toolbar, without duplication",
+                    !railVisible, compactStatus.isShown)
                 assertTrue("Landscape capture action must remain reachable", button("Start camera").isShown)
             }
             instrumentation.runOnMainSync {
                 activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
             instrumentation.waitForIdleSync()
+            activity = requireNotNull(resumedMainActivity(instrumentation)) { "Portrait MainActivity did not resume" }
             instrumentation.runOnMainSync {
-                val all = buttons(activity.findViewById(android.R.id.content))
+                val all = views(activity.findViewById(android.R.id.content)).filterIsInstance<android.widget.Button>()
                 val start = all.single { it.text.toString().equals("Start camera", ignoreCase = true) }
                 val stop = all.single { it.text.toString().equals("Stop camera", ignoreCase = true) }
                 assertTrue("Start action not visible", start.getGlobalVisibleRect(android.graphics.Rect()))
                 assertFalse("Stop action should stay hidden while idle", stop.isShown)
             }
         } finally {
-            instrumentation.runOnMainSync { activity.finish() }
+            val current = resumedMainActivity(instrumentation) ?: activity
+            instrumentation.runOnMainSync { current.finish() }
             instrumentation.targetContext.getSharedPreferences("mobile-ui", Context.MODE_PRIVATE).edit().clear().commit()
         }
+    }
+
+    private fun resumedMainActivity(instrumentation: android.app.Instrumentation): MainActivity? {
+        val active = AtomicReference<MainActivity?>()
+        instrumentation.runOnMainSync {
+            active.set(ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .filterIsInstance<MainActivity>().firstOrNull())
+        }
+        return active.get()
+    }
+
+    @Test fun cameraWorkspaceUsesCompactDestinationToolbarAndTruthfulCaptureAction() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val activity = instrumentation.startActivitySync(android.content.Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        instrumentation.waitForIdleSync()
+        fun views(view: android.view.View): List<android.view.View> = listOf(view) +
+            if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
+        try {
+            instrumentation.runOnMainSync {
+                val root = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
+                val buttons = views(root).filterIsInstance<android.widget.Button>().filter { it.isShown }
+                assertTrue("Settings must be reachable from the compact camera toolbar", buttons.any { it.contentDescription == "Settings" })
+                assertTrue("Peer/state affordance must open Connections", buttons.any { it.contentDescription?.contains("Connections") == true })
+                assertFalse("Camera workspace must not retain the three destination dashboard", buttons.any { it.text.toString() == "Camera" })
+                val compactStatus = views(root).filterIsInstance<android.widget.TextView>()
+                    .single { it.contentDescription?.startsWith("Compact connection and capture status") == true }
+                assertTrue("Portrait Camera must keep a visible connection and capture status", compactStatus.isShown)
+                assertTrue("Compact status must identify the actual capture state", compactStatus.contentDescription.contains("Capture state:"))
+                assertEquals("Exactly one explicit capture action is visible while stopped", 1,
+                    buttons.count { it.text.toString() == "Start camera" || it.text.toString() == "Stop camera" })
+                val preview = views(root).filterIsInstance<android.view.SurfaceView>().single()
+                val bounds = android.graphics.Rect()
+                assertTrue("Preview viewport should be visible and usable", preview.getGlobalVisibleRect(bounds) && bounds.width() >= MobileUi.dp(activity, 180))
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 
     @Test fun mobileControlsAcceptLateDescriptorsAndRuntimeUnavailability() {

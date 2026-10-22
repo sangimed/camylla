@@ -8,8 +8,11 @@ class CameraWorkspaceLayoutTest {
         assertEquals(CameraWorkspaceLayout.Mode.COMPACT, CameraWorkspaceLayout.choose(390, 600, 1f))
         assertEquals(CameraWorkspaceLayout.Mode.STACKED, CameraWorkspaceLayout.choose(700, 900, 1f))
         assertEquals(CameraWorkspaceLayout.Mode.SPLIT, CameraWorkspaceLayout.choose(900, 500, 1f))
-        assertEquals(CameraWorkspaceLayout.Mode.SPLIT, CameraWorkspaceLayout.choose(900, 320, 1f))
-        assertEquals(CameraWorkspaceLayout.Mode.SPLIT, CameraWorkspaceLayout.choose(1200, 420, 1f))
+        assertEquals(CameraWorkspaceLayout.Mode.SPLIT, CameraWorkspaceLayout.choose(800, 500, 1f))
+        assertEquals(CameraWorkspaceLayout.Mode.STACKED, CameraWorkspaceLayout.choose(500, 800, 1f))
+        assertEquals(CameraWorkspaceLayout.Mode.COMPACT, CameraWorkspaceLayout.choose(700, 900, 1.25f))
+        assertEquals(CameraWorkspaceLayout.Mode.COMPACT, CameraWorkspaceLayout.choose(900, 419, 1f))
+        assertEquals(CameraWorkspaceLayout.Mode.SPLIT, CameraWorkspaceLayout.choose(900, 420, 1f))
         assertEquals(CameraWorkspaceLayout.Mode.COMPACT, CameraWorkspaceLayout.choose(900, 800, 1.5f))
     }
 }
