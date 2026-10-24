@@ -1,94 +1,152 @@
 # Android camera-first UI design
 
-Status: implementation specification for [#59](https://github.com/sangimed/camylla/issues/59).
-Reference findings are recorded in [DroidCam Android UI research](research/droidcam-android-ui-2026-10-21.md).
+Status: follow-up implementation specification for [#59](https://github.com/sangimed/camylla/issues/59), informed by direct inspection of the five user-supplied DroidCam OBS screenshots and the source audit in [the prior-redesign diagnosis](validation/android-ui-redesign-diagnosis-2026-10-22.md).
 
 ## Product intent
 
-Give Camylla a camera-first experience that feels familiar to users of the current
-DroidCam OBS Android app: a large live image, dense camera-context controls, clear
-connection/output information, and direct access to grouped settings. The supplied
-screenshots determine the reference layout. Camylla retains its own identity and
-original icons. The existing Camera, Connections, and Settings destinations remain.
+Make the Android app immediately read as a camera console: a live image occupies
+the working area, supported camera actions sit at its edges, and connection and
+output facts stay visible without obscuring the image. Use the reference's compact
+camera-first hierarchy and flat preference screens while retaining Camylla's
+name, semantic colors, security flows, and original vector artwork. Do not change
+Windows UI.
 
 ## Camera workspace
 
-- Keep the active preview as the largest element. Landscape uses a preview-led
-  console with compact connection/output details at the leading edge, selectors and
-  high-use controls near the preview, and the capture action at a fixed reachable
-  edge. Do not cover the center of the image with decorative panels.
-- Portrait stacks the preview over a compact, horizontally scrollable quick-control
-  strip. Connection details can collapse; Start/Stop stays visible without scrolling.
-- Use available width and height, not orientation alone, to choose stacked, split, or
-  compact layouts. On tablets, extra width expands the preview before control rails.
-  Scroll low-priority controls at short heights and large font scales.
-- Keep Camera, Connections, Settings navigation compact in the camera context; use
-  preference-style full-width rows and a category index for settings.
-- Camera/lens, video mode, zoom, focus, autofocus/lock, torch, exposure, white balance,
-  image, orientation/mirroring, preview aids, and presets remain capability-aware.
-  Frequent actions stay on Camera; specialist controls are grouped under Camera
-  controls or the relevant settings category.
+Treat the camera workspace as a dedicated screen, not a dashboard with three
+large destination buttons above the preview. Camera remains the default. Put a
+compact Camylla identity and connection/session entry in a shallow top rail;
+open Settings from a gear/action on that rail and Connections from the peer/state
+control. Back from either destination returns to Camera. The top rail collapses
+when height is constrained.
 
-## State and lifecycle
+### Landscape camera console
 
-The visible capture action is a single stateful action: **Start** while stopped and
-ready, **Stop** while starting, binding, capturing, or recovering. Pairing trust is
-not a live session. Starting, streaming, recovery, stopped, and error states come
-from the existing service and transport state, with words/icons as well as color.
-Only observed camera values are presented as applied; pending and unavailable states
-retain their explanation.
+- Use an edge-to-edge dark canvas. Allocate roughly 18–22% of available width to
+  a narrow leading status rail and the remainder to the preview. Keep the live
+  image full-height, aspect-correct, and visually dominant.
+- The status rail shows explicit pairing/session wording, trusted PC name when
+  paired, and only observed output/network values. Keep the single stateful
+  Start/Stop action at its reachable lower edge.
+- Place compact, transparent framing/preview-aid actions along the upper preview
+  edge. Place supported camera actions along its lower edge: camera, focus/AF,
+  white balance, exposure, torch, and zoom as available. No opaque panel crosses
+  the image center.
+- On the Xiaomi target, 800dp landscape width must be sufficient for this split
+  composition when the available height permits it. Use actual window bounds and
+  a 700dp split threshold, with a height fallback for short landscape windows.
 
-Activity recreation for rotation rebuilds the presentation against current available
-bounds and reattaches the preview to the existing foreground service. It must not
-start another camera, encoder, transport, or authorized session. Pairing, security,
-camera lifecycle, authentication, and Windows protocol behavior stay behind their
-existing contracts.
+### Portrait and constrained camera workspace
 
-## Visual system and components
+- Use a one-line top rail, a full-width preview stage taking about 48–58% of the
+  remaining height, and one compact horizontal quick-control rail immediately
+  below it. Keep the single Start/Stop action fixed at the bottom and visible
+  without scrolling.
+- Collapse connection details into one labeled status line; open full peer and
+  transport information in Connections. Keep secondary camera controls in a
+  scrollable Camera controls surface.
+- For tablet portrait, center a bounded column while allowing the preview to
+  grow vertically; keep the preview above controls and status. Do not stretch
+  preference rows into cards.
+- At short heights or increased font scales, remove low-frequency edge actions
+  into overflow/advanced controls before reducing the preview or hiding
+  Start/Stop. All essential actions remain at least 48dp and text uses `sp`.
 
-Retain Camylla's `MobileUi` palette and semantic meanings: anthracite backgrounds,
-flat dark surfaces, fine separators, white primary text, muted support text, blue
-actions/focus, green healthy state, amber recovery, and red Stop/critical errors.
-Use the native system font and scalable `sp`, 4dp-based spacing, 48dp minimum hit
-targets, original vector symbols, and restrained corner radii. Avoid dashboard cards,
-decorative gradients, copied third-party assets, and unlabeled essential actions.
+The supplied camera screenshot shows a live, actively streaming landscape state
+with **Stop**. It does not show the stopped/unpaired camera screen or portrait
+camera geometry. Camylla's SurfaceView is currently produced by the authorized
+capture service only. Keep the viewport large in every state, but when no camera
+buffer exists show a truthful pairing/ready/start prompt rather than a fake
+image. Do not add a second camera owner or start transport from navigation. A
+preview-only camera lifecycle is out of scope unless implementation proves it is
+the smallest safe change required for the requested preview behavior.
 
-Settings use DroidCam's category and preference-row organization: icon/title, current
-value or subtitle, trailing switch/chevron, and thin dividers. Map only existing
-Camylla capabilities; omit Audio, Remote Control, Pro commerce, and unsupported
-Camera2 options. Pairing/security stays in Connections and Settings as already
-implemented. No row is a placeholder.
+## State and interaction model
 
-Control rows show label, input, camera-confirmed value, unit, pending state, and
-device-provided unavailable reason. Choice dialogs, sliders and toggles preserve
-existing callbacks and descriptor validation. Start/Stop and pairing/destructive
-actions keep visible text.
+| State | Camera screen treatment | Primary action |
+|---|---|---|
+| Not paired | Empty preview viewport with a concise “Connect a PC” prompt; no peer or stream claims | Connect a PC; Start disabled until a trusted peer exists |
+| Paired and ready | Show trusted PC as paired/idle and selected mode; never imply a live feed | Start |
+| Connecting / binding | Text status and progress; retain visible controls and clear session intent | Stop |
+| Streaming | Live preview dominates; show observed peer/output/network state | Stop |
+| Recovering | Amber recovery text, distinguish local camera from remote feed, offer retry only when the service supports it | Stop; Retry when available |
+| Disconnected | Explicitly show stopped plus last error or paired-but-offline | Start, or the relevant recovery action |
+| Error | Red semantic status plus actual cause and corrective action | Contextual action; Stop if a session remains active |
 
-## Existing capability mapping
+Use service and transport state, not saved pairing, to derive status. Treat
+selected, requested, applied, and observed values separately. Surface only
+capability-backed actions; report unsupported controls with their device reason.
+Do not claim 60 FPS from a selected 60 FPS mode when observed delivery differs.
+Keep phone-side Start authorization explicit.
 
-| Current Camylla behavior | Redesigned location |
-|---|---|
-| `SurfaceView` preview and focus markers | Dominant Camera workspace; preserve safe inset and aspect behavior |
-| Camera/lens and video mode | Compact selectors next to the preview |
-| Zoom, torch, focus centre/autofocus/lock | Camera quick controls |
-| Focus distance, exposure/light, white balance, image, orientation, mirroring, preview aids | Grouped Camera controls/settings, based on camera descriptors |
-| Preset save/apply/delete and reset | Advanced Camera controls |
-| Pairing code/QR, trusted desktop, forget/revoke | Connections, preserving existing confirmation/security flows |
-| Key rotation, recovery and diagnostics | Settings, in clear Security and Diagnostics groups |
-| Explicit phone-authorized capture | One prominent Start/Stop action |
+## Camera action placement
 
-## Acceptance
+| DroidCam screenshot element | Camylla implementation | Required treatment |
+|---|---|---|
+| Live camera preview and framing grid | `MainActivity` `SurfaceView`/focus overlay; service attaches preview | Expand to the dominant workspace; preserve aspect, tap focus, pinch zoom, and rotation-safe reattachment |
+| Camera switch at lower edge | Existing camera catalog and selector | Compact camera action; choose only catalogued lenses |
+| Video quality / target FPS | `CaptureService.Mode`, `CaptureModeCapability`, selected and observed capture stats | Keep supported 720p30, 1080p30, and capability-gated 1080p60 choices; show selected/effective/delivered values separately |
+| AWB / EV / AF-C / zoom controls | `CameraControlsPanel`, `CameraQuickControls`, `CaptureService` camera descriptors | Promote supported controls to quick rail; actual callbacks, values, pending feedback, and unavailable reasons remain authoritative |
+| Tap focus / focus state marker | `MainActivity` gesture handling, `FocusTargetView`, `FocusFeedback`, `CaptureService.tapFocus` | Keep tap-to-focus feedback over the image, pinch zoom, autofocus, manual focus and focus/AE/WB locks when descriptors expose them |
+| Exposure, white balance, and torch | `CameraControlsPanel` descriptor-backed options in `CaptureService` | Keep supported EV/ISO/shutter/anti-flicker, WB mode/temp/tint, torch/strength in grouped controls; show applied, pending, or unavailable explicitly |
+| Saved camera parameters | `CameraSettings` presets plus `CaptureService.applyPreset/savePreset/resetSettings` | Retain preset save/apply/delete/reset in Camera controls |
+| Grid/crop/framing tools | Existing preview aids and settings | Small transparent edge actions; do not cover center |
+| Wi-Fi/LAN endpoint and video stats rail | `CaptureService.stats`, selected peer, network progress | Show peer/session state plus effective resolution, codec, delivered FPS, and transport state only when observed |
+| Stop | Existing explicit capture Stop | One prominent Stop while starting, binding, capturing, or recovering |
+| Settings gear | Existing Settings category index | Compact camera toolbar action; category page opens on demand |
+| Connection/pairing entry | `Connections` destination, `PairActivity`, `ProductIdentity` trusted desktop and key-rotation flows | Reachable from camera state; keep code/QR pairing, trust/forget/revoke and pending key recovery without conflating trust with stream state |
 
-- Landscape active camera is visibly preview-dominant with connection/output context
-  and compact reachable camera controls.
-- Portrait, narrow landscape, tablet/wide window, and increased font scale reflow
-  without overlap or hidden Start/Stop.
-- Paired-ready, starting, streaming, recovering, disconnected and error are never
-  conflated; capture never starts from navigation, pairing, settings, or rotation.
-- Existing capabilities and feedback remain functional; unsupported values are not
-  simulated.
-- Repeated rotation preserves the active service session and returns the preview.
-- Settings use category and flat preference rows without removing security, pairing,
-  diagnostic, preset, or advanced camera functions.
-- Runtime visual evidence is captured only with explicit user authorization. OBS is
-  the release consumer for focused streaming checks; no timed endurance requirement.
+## Settings presentation
+
+Use a title/back bar and full-width category index with original line icons,
+large labels, and thin separators. Each category opens a titled detail page with
+flat preference rows: label, value or explanatory subtitle, and an aligned
+choice/switch/chevron. Use the screenshot's dense preference hierarchy rather
+than rounded dashboard cards.
+
+Keep Camylla destinations and map only existing functions:
+
+- **Video:** supported resolution/FPS choices, current/effective output, and
+  existing encoder controls.
+- **Camera:** lens/mode selection, focus, exposure, white balance, image and
+  orientation controls, preview aids, and presets.
+- **Security:** pairing/trusted PCs, key rotation, and recovery entry points.
+- **Diagnostics:** existing service, camera, encoder, and transport diagnostics.
+- **Connections:** its existing dedicated pairing/trusted-peer workflow remains
+  a top-level destination reachable from the camera state control.
+
+Omit DroidCam-only Audio, Remote Control, Get Pro, and unsupported Camera2
+options. Settings rows must operate existing callbacks; there are no placeholders.
+
+## Visual system and accessibility
+
+Retain Camylla's palette and semantics: anthracite canvas, flat charcoal
+surfaces, thin separators, white primary text, muted secondary text, blue action
+and focus, green healthy state, amber recovery, and red Stop/critical error.
+Use the native system font and existing original symbols. Prefer flat surfaces,
+small radii, clear dividers, and a 4dp spacing rhythm. Make essential controls
+at least 48dp, primary capture controls at least 52dp, icon glyphs about 24dp,
+and support font scaling through wrapping/scrolling. Icon actions need accessible
+names; pairing, Start/Stop, and destructive actions keep visible text. Selected,
+pressed, disabled, pending, unavailable, and error states must be distinguishable
+by text/shape as well as color.
+
+## Orientation and lifecycle
+
+Base the layout on current available bounds and font scale, with distinct phone
+portrait, phone landscape, tablet portrait, and tablet landscape compositions.
+During configuration changes restore the selected destination and reattach the
+new preview SurfaceView to the same foreground service. Do not start another
+camera, encoder, transport, or authorization when rotating. Preserve issue #70's
+existing active-session lifecycle behavior.
+
+## Validation contract
+
+The physical Xiaomi is 1600×2560 at 320dpi. Validate both portrait (500×800dp)
+and landscape (800×500dp) on Android user 10, the prior Security Space target.
+Record source commit, APK hash, package/version/versionCode, `pm path`, current
+user, launcher Activity, process, permissions, and visible UI. Compare the new
+screens against both the alpha6 baseline and the supplied reference images.
+Exercise camera, connections, settings categories, quick controls, Start/Stop,
+and rotation without changing capture/session ownership. Keep captures local and
+delete them after the authorized visual review.
